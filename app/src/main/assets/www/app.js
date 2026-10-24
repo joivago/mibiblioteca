@@ -178,7 +178,7 @@ function shortAuthor(a) {
 const SORTS = {
   autor: { c: 'Autor', n: 'Autor (A–Z)', f: (a, b) => cmp(a.autor, b.autor) || cmp(titleKey(a.titulo), titleKey(b.titulo)) },
   titulo: { c: 'Título', n: 'Título (A–Z)', f: (a, b) => cmp(titleKey(a.titulo), titleKey(b.titulo)) },
-  editorial: { c: 'Editorial', n: 'Editorial', f: (a, b) => cmp(pubName(a.editorial), pubName(b.editorial)) || cmp(a.autor, b.autor) },
+  editorial: { c: 'Editorial', n: 'Editorial y título (A–Z)', f: (a, b) => cmp(pubName(a.editorial), pubName(b.editorial)) || cmp(titleKey(a.titulo), titleKey(b.titulo)) },
   anio: { c: 'Año', n: 'Año de publicación', f: (a, b) => (parseInt(a.anio) || 9999) - (parseInt(b.anio) || 9999) || cmp(a.autor, b.autor) },
   nota: { c: 'Nota', n: 'Mi puntuación', f: (a, b) => (b.nota || 0) - (a.nota || 0) || cmp(titleKey(a.titulo), titleKey(b.titulo)) },
   recientes: { c: 'Recientes', n: 'Añadidos recientemente', f: (a, b) => (b.creado || 0) - (a.creado || 0) }
@@ -342,7 +342,7 @@ function openDetail(id) {
         <div class="saved"></div>
 
         <h3 class="sec">Sinopsis</h3>
-        ${b.sinopsis ? `<div class="synopsis clamp">${esc(b.sinopsis)}</div><button class="more" hidden>Leer más</button>`
+        ${b.sinopsis ? `<div class="synopsis">${esc(b.sinopsis)}</div>`
       : `<div class="muted" style="font-size:14.5px">Sin sinopsis. Puedes escribirla tocando ${ic('edit')} arriba.</div>`}
 
         <h3 class="sec">Datos del libro</h3>
@@ -446,7 +446,7 @@ function openEdit(book, preset, afterSave) {
       ${f('coleccion', 'Colección')}
       <div class="two">${f('anio', 'Año', 'num')}${f('paginas', 'Páginas', 'num')}</div>
       <div class="two">${f('isbn', 'ISBN')}${f('idioma', 'Idioma')}</div>
-      <div class="field"><label>Sinopsis</label><textarea data-k="sinopsis">${esc(d.sinopsis)}</textarea></div>
+      <div class="field"><label style="display:flex;align-items:center">Sinopsis<button class="more" data-refetch style="margin:0 0 0 auto">Buscar la completa</button></label><textarea data-k="sinopsis">${esc(d.sinopsis)}</textarea></div>
     </div></div>`);
 
   const read = () => { const o = {}; $$('[data-k]', ov).forEach(i => o[i.dataset.k] = i.value.trim()); return o; };
@@ -462,6 +462,18 @@ function openEdit(book, preset, afterSave) {
     $('[data-c="recortar"]', ov).hidden = !(draft.portada && !/^https?:/.test(draft.portada));
   };
   paintCover();
+  const syn = $('[data-k="sinopsis"]', ov);
+  const grow = () => { syn.style.height = 'auto'; syn.style.height = Math.max(160, syn.scrollHeight + 4) + 'px'; };
+  syn.addEventListener('input', grow); requestAnimationFrame(grow);
+  $('[data-refetch]', ov).onclick = async e => {
+    const isbn = cleanIsbn($('[data-k="isbn"]', ov).value);
+    if (isbn.length < 10) { toast('Pon el ISBN para buscarla'); return; }
+    const btn = e.currentTarget; btn.textContent = 'Buscando…';
+    const r = (await byIsbn(isbn).catch(() => []))[0];
+    btn.textContent = 'Buscar la completa';
+    if (r && r.sinopsis && r.sinopsis.length > syn.value.trim().length) { syn.value = r.sinopsis; grow(); toast('Sinopsis actualizada'); }
+    else toast('No he encontrado una sinopsis más completa');
+  };
   $$('[data-k="titulo"],[data-k="autor"],[data-k="editorial"]', ov).forEach(i => i.addEventListener('input', debounce(paintCover, 300)));
 
   const setLocal = path => { if (path) { draft.portada = path; draft.candidatos = []; draft.cambio = true; paintCover(); } };
@@ -674,9 +686,50 @@ async function ttlIsbn(isbn) {
     coleccion: niceName(txt(doc.querySelector('a[href*="/colecciones/"],a[href*="/coleccion/"]'))),
     anio: (body.match(/(?:publicaci[oó]n|edici[oó]n)\s*:?\s*(?:\d{1,2}[\/-]\d{1,2}[\/-])?((?:19|20)\d{2})/i) || [])[1] || '',
     paginas: (body.match(/p[aá]ginas?\s*:?\s*(\d{2,4})/i) || [])[1] || '',
-    isbn, idioma: 'es', sinopsis: meta('description') || meta('og:description'),
+    isbn, idioma: 'es', sinopsis: ttlSynopsis(doc) || meta('description') || meta('og:description'),
     covers: img ? [img] : [], thumb: img
   };
+}
+// La sinopsis completa va debajo del título «Descripción» y antes de «Sobre autoría»
+function ttlSynopsis(doc) {
+  // 1) Bloque de la sinopsis por su id («Leer todo» abre #collapseSynopsis)
+  const clean = t => (t || '').replace(/\b(Leer todo|Leer menos|Leer más)\b/gi, ' ').replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').replace(/\n{2,}/g, '\n\n').trim();
+  const byId = ['#synopsis', '#collapseSynopsis', '[id*="ynopsis"]', '.synopsis', '[class*="synopsis"]']
+    .flatMap(s => [...doc.querySelectorAll(s)]).map(el => {
+      const ps = el.querySelectorAll('p');
+      return clean(ps.length ? [...ps].map(p => p.textContent).join('\n\n') : el.textContent);
+    }).filter(t => t.length > 40).sort((a, b) => b.length - a.length);
+  if (byId.length) {
+    let best = byId[0];
+    // si el bloque largo es solo la continuación del avance, se unen
+    const short = byId.find(t => t !== best && t.length < best.length);
+    if (short && !best.includes(short.slice(0, 40)) && !short.includes(best.slice(0, 40))) best = short + ' ' + best;
+    if (best.length > 60) return best;
+  }
+  // 2) Lo que va debajo del título «Descripción»
+  const isHead = el => /^H[1-6]$/.test(el.tagName) || /^(descripci[oó]n|sobre autor[ií]a|sobre el autor|ficha t[eé]cnica|opiniones|otros libros)/i.test((el.textContent || '').trim()) && (el.textContent || '').trim().length < 40;
+  const head = [...doc.querySelectorAll('h1,h2,h3,h4,h5,h6,strong,b,span,div,p,dt')]
+    .find(el => /^descripci[oó]n:?$/i.test((el.textContent || '').trim()));
+  const parts = [];
+  if (head) {
+    let el = head;
+    // si el título no tiene hermanos detrás, sube un nivel
+    while (el && !el.nextElementSibling && el.parentElement && el.parentElement !== doc.body) el = el.parentElement;
+    for (let s = el && el.nextElementSibling; s; s = s.nextElementSibling) {
+      if (isHead(s)) break;
+      const blocks = s.querySelectorAll('p');
+      const texts = blocks.length ? [...blocks].map(p => p.textContent) : [s.textContent];
+      for (const t of texts) { const x = t.replace(/\s+/g, ' ').trim(); if (x) parts.push(x); }
+      if (parts.join(' ').length > 6000) break;
+    }
+  }
+  let txt = parts.join('\n\n').trim();
+  if (txt.length < 60) {
+    const body = (doc.body ? doc.body.textContent : '').replace(/\s+/g, ' ');
+    const m = body.match(/Descripci[oó]n:?\s+(.{60,6000}?)\s+(?:Sobre autor[ií]a|Sobre el autor|Ficha t[eé]cnica|Opiniones|Otros libros)/i);
+    txt = m ? m[1].trim() : '';
+  }
+  return txt;
 }
 async function olSearchIsbn(isbn) {
   const r = await olSearch('isbn:' + isbn).catch(() => []);
@@ -700,7 +753,7 @@ async function byIsbn(raw) {
   ]);
   // Google da buena sinopsis; todostuslibros, la editorial y los datos de la edición española
   let r = g[0] || null;
-  if (r && t) { r = merge(r, t); if (t.editorial) r.editorial = t.editorial; if (t.coleccion) r.coleccion = t.coleccion; }
+  if (r && t) { const gs = r.sinopsis || ''; r = merge(r, t); if ((t.sinopsis || '').length > gs.length) r.sinopsis = t.sinopsis; if (t.editorial) r.editorial = t.editorial; if (t.coleccion) r.coleccion = t.coleccion; }
   else r = r || t;
   r = merge(r, o);
   if (!r) return [];
