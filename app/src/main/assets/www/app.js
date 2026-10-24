@@ -960,6 +960,8 @@ function openSettings() {
       <h3 class="sec">Copia de seguridad</h3>
       <div class="listrow" data-exp>${ic('download')}<div class="nm">Guardar copia<small>Libros, reseñas y portadas en un archivo</small></div></div>
       <div class="listrow" data-imp>${ic('upload')}<div class="nm">Recuperar copia<small>Sustituye lo que hay ahora en la app</small></div></div>
+      <h3 class="sec">Goodreads</h3>
+      <div class="listrow" data-gr>${ic('book')}<div class="nm">Exportar para Goodreads<small>Archivo CSV con tus libros, notas, reseñas y leídos/pendientes</small></div></div>
       <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.0 · Datos de libros de Google Books y Open Library</p>
     </div></div>`);
   const paintView = () => $$('[data-view] button', ov).forEach(b => b.classList.toggle('on', b.dataset.v === s.view));
@@ -977,12 +979,38 @@ function openSettings() {
     const r = await native('exportBackup', `mi-biblioteca-${d}.json`);
     if (r === 'ok') toast('Copia guardada'); else if (r) toast('No se ha podido guardar la copia');
   };
+  $('[data-gr]', ov).onclick = async () => {
+    if (!state.books.length) { toast('No hay libros que exportar'); return; }
+    if (!N || !N.exportCsv) { toast('Disponible en el móvil'); return; }
+    const d = new Date().toISOString().slice(0, 10);
+    const r = await native('exportCsv', `goodreads-${d}.csv`, goodreadsCsv());
+    if (r === 'ok') toast('Archivo guardado. Súbelo en goodreads.com/review/import'); else if (r) toast('No se ha podido guardar');
+  };
   $('[data-imp]', ov).onclick = async () => {
     if (!N) { toast('Disponible en el móvil'); return; }
     if (!await confirmBox('¿Recuperar una copia?', 'Lo que tienes ahora en la estantería se sustituirá por lo que haya en el archivo.', 'Elegir archivo', true)) return;
     const r = await native('importBackup');
     if (r === 'error') toast('Ese archivo no es una copia de Mi biblioteca');
   };
+}
+
+/* CSV con el formato de exportación de Goodreads, que es el que acepta su importador */
+function goodreadsCsv() {
+  const q = v => { const s = String(v ?? ''); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const fecha = v => { const t = typeof v === 'number' ? new Date(v) : (v ? new Date(v + 'T12:00:00') : null); return t && !isNaN(t) ? t.toISOString().slice(0, 10).replace(/-/g, '/') : ''; };
+  const head = ['Title', 'Author', 'Additional Authors', 'ISBN', 'ISBN13', 'My Rating', 'Publisher', 'Number of Pages', 'Year Published', 'Date Read', 'Date Added', 'Bookshelves', 'Exclusive Shelf', 'My Review', 'Owned Copies'];
+  const rows = state.books.map(b => {
+    const isbn = cleanIsbn(b.isbn);
+    const autores = String(b.autor || '').split(/\s*[,;&]\s*|\s+y\s+/).filter(Boolean);
+    const leido = b.estado === 'leido';
+    return [
+      b.titulo, autores[0] || '', autores.slice(1).join(', '),
+      isbn.length === 10 ? isbn : toIsbn10(isbn), isbn.length === 13 ? isbn : '',
+      b.nota || 0, pubName(b.editorial), b.paginas || '', b.anio || '',
+      leido ? fecha(b.fechaLeido) : '', fecha(b.creado), '', leido ? 'read' : 'to-read', b.resena || '', 1
+    ].map(q).join(',');
+  });
+  return [head.join(','), ...rows].join('\r\n');
 }
 
 function openStyles() {

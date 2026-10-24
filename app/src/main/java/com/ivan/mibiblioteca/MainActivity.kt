@@ -106,6 +106,21 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    private var textoPendiente: String? = null
+    private val crearCsv =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+            val cb = cbCopia ?: return@registerForActivityResult
+            cbCopia = null
+            val texto = textoPendiente; textoPendiente = null
+            if (uri == null || texto == null) { resolver(cb, null); return@registerForActivityResult }
+            hilos.execute {
+                val ok = try {
+                    contentResolver.openOutputStream(uri)!!.use { it.write(texto.toByteArray(Charsets.UTF_8)) }; true
+                } catch (e: Exception) { false }
+                resolver(cb, if (ok) "ok" else "error")
+            }
+        }
+
     private val abrirCopia =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             val cb = cbCopia ?: return@registerForActivityResult
@@ -411,6 +426,11 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun pickImage(cb: String) {
             principal.post { cbImagen = cb; elegirImagen.launch("image/*") }
+        }
+
+        @JavascriptInterface
+        fun exportCsv(cb: String, nombre: String, texto: String) {
+            principal.post { cbCopia = cb; textoPendiente = texto; crearCsv.launch(nombre) }
         }
 
         @JavascriptInterface
