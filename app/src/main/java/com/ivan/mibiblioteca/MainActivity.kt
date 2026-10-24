@@ -43,6 +43,8 @@ import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+private const val AGENTE = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36"
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var web: WebView
@@ -232,7 +234,7 @@ class MainActivity : AppCompatActivity() {
                 connectTimeout = 10000
                 readTimeout = 15000
                 instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "MiBiblioteca/1.0 (Android)")
+                setRequestProperty("User-Agent", AGENTE)
             }
             var codigo = con.responseCode
             var saltos = 0
@@ -242,7 +244,7 @@ class MainActivity : AppCompatActivity() {
                 con.disconnect()
                 con = (URL(URL(url), destino).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 10000; readTimeout = 15000
-                    setRequestProperty("User-Agent", "MiBiblioteca/1.0 (Android)")
+                    setRequestProperty("User-Agent", AGENTE)
                 }
                 codigo = con.responseCode
                 saltos++
@@ -356,6 +358,17 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (_: Exception) { }
                 resolver(cb, ruta)
+            }
+        }
+
+        /** Descarga una página de todostuslibros.com (la web no deja leerla desde la interfaz). */
+        @JavascriptInterface
+        fun httpGet(cb: String, url: String) {
+            hilos.execute {
+                val host = try { URL(url).host } catch (e: Exception) { "" }
+                val texto = if (host == "todostuslibros.com" || host.endsWith(".todostuslibros.com"))
+                    descargar(url)?.toString(Charsets.UTF_8) else null
+                resolver(cb, texto)
             }
         }
 
