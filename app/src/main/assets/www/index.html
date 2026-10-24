@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Mi biblioteca</title>
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body data-theme="roble">
+
+<header id="top">
+  <div class="tb">
+    <div class="ttl">
+      <h1>Mi biblioteca</h1>
+      <div id="count" class="sub"></div>
+    </div>
+    <button class="ib" id="bSearch" aria-label="Buscar"></button>
+    <button class="ib" id="bView" aria-label="Cambiar vista"></button>
+    <button class="ib" id="bMenu" aria-label="Ajustes"></button>
+  </div>
+  <div id="searchbar" hidden>
+    <input id="q" type="search" placeholder="Buscar por título, autor, editorial…" autocomplete="off">
+  </div>
+  <div class="tools">
+    <div class="seg" id="filt">
+      <button data-f="todos">Todos</button>
+      <button data-f="leido">Leídos</button>
+      <button data-f="pendiente">Pendientes</button>
+    </div>
+    <button class="chip" id="bSort"></button>
+  </div>
+</header>
+
+<main id="case"><div id="shelves"></div></main>
+
+<button id="fab" aria-label="Añadir libro"></button>
+<div id="layer"></div>
+<div id="toast"></div>
+
+<script src="estilos-editoriales.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

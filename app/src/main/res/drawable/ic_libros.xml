@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tres libros de pie sobre una balda (zona segura 66x66 dentro de 108x108) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- balda -->
+    <path android:fillColor="#C99A63" android:pathData="M27,71h54v6h-54z" />
+    <path android:fillColor="#8A5B33" android:pathData="M27,77h54v2h-54z" />
+    <!-- libro amarillo -->
+    <path android:fillColor="#E8B92F" android:pathData="M33,37h10v34h-10z" />
+    <path android:fillColor="#1B1B1B" android:pathData="M33,42h10v2h-10z M33,63h10v2h-10z" />
+    <!-- libro crema -->
+    <path android:fillColor="#F2EDE3" android:pathData="M45,31h11v40h-11z" />
+    <path android:fillColor="#B22B27" android:pathData="M45,36h11v5h-11z" />
+    <!-- libro negro inclinado -->
+    <path android:fillColor="#1C1C1C" android:pathData="M60.5,40.2l9.7,-2.6l8.8,32.9l-9.7,2.6z" />
+    <path android:fillColor="#F58220" android:pathData="M62,45.8l9.7,-2.6l0.8,2.9l-9.7,2.6z" />
+</vector>
