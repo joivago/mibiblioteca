@@ -471,8 +471,8 @@ function openEdit(book, preset, afterSave) {
     const btn = e.currentTarget; btn.textContent = 'Buscando…';
     const r = (await byIsbn(isbn).catch(() => []))[0];
     btn.textContent = 'Buscar la completa';
-    if (r && r.sinopsis && r.sinopsis.length > syn.value.trim().length) { syn.value = r.sinopsis; grow(); toast('Sinopsis actualizada'); }
-    else toast('No he encontrado una sinopsis más completa');
+    if (r && r.sinopsis && r.sinopsis.trim() !== syn.value.trim()) { syn.value = r.sinopsis; grow(); toast('Sinopsis actualizada'); }
+    else toast(r && r.sinopsis ? 'Ya tienes la sinopsis completa' : 'No he encontrado la sinopsis');
   };
   $$('[data-k="titulo"],[data-k="autor"],[data-k="editorial"]', ov).forEach(i => i.addEventListener('input', debounce(paintCover, 300)));
 
@@ -680,21 +680,23 @@ async function ttlIsbn(isbn) {
   const txt = a => a ? a.textContent.replace(/\s+/g, ' ').trim() : '';
   const body = (doc.body ? doc.body.textContent : '').replace(/\s+/g, ' ');
   let img = meta('og:image'); if (img && img.startsWith('//')) img = 'https:' + img;
+  const full = ttlSynopsis(doc);
+  const syn = full || meta('description') || meta('og:description');
   return {
     titulo, subtitulo: '', autor: niceName(txt(doc.querySelector('a[href*="/creador/"]'))),
     editorial: niceName(txt(doc.querySelector('a[href*="/editoriales/"]'))).replace(/[\s,]+S\.?\s?[AL]\.?(\s?U\.?)?$/i, ''),
     coleccion: niceName(txt(doc.querySelector('a[href*="/colecciones/"],a[href*="/coleccion/"]'))),
     anio: (body.match(/(?:publicaci[oó]n|edici[oó]n)\s*:?\s*(?:\d{1,2}[\/-]\d{1,2}[\/-])?((?:19|20)\d{2})/i) || [])[1] || '',
     paginas: (body.match(/p[aá]ginas?\s*:?\s*(\d{2,4})/i) || [])[1] || '',
-    isbn, idioma: 'es', sinopsis: ttlSynopsis(doc) || meta('description') || meta('og:description'),
+    isbn, idioma: 'es', sinopsis: syn, _corta: !full,
     covers: img ? [img] : [], thumb: img
   };
 }
 // La sinopsis completa va debajo del título «Descripción» y antes de «Sobre autoría»
 function ttlSynopsis(doc) {
   // 1) Bloque de la sinopsis por su id («Leer todo» abre #collapseSynopsis)
-  const clean = t => (t || '').replace(/\b(Leer todo|Leer menos|Leer más)\b/gi, ' ').replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').replace(/\n{2,}/g, '\n\n').trim();
-  const byId = ['#synopsis', '#collapseSynopsis', '[id*="ynopsis"]', '.synopsis', '[class*="synopsis"]']
+  const clean = t => (t || '').replace(/\b(Leer descripci[oó]n completa|Leer todo|Leer menos|Leer más)\b/gi, ' ').replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').replace(/\n{2,}/g, '\n\n').trim();
+  const byId = ['#collapseSynopsis', '#synopsis', '[id*="ynopsis"]', '.synopsis', '[class*="synopsis"]:not([class*="short"])']
     .flatMap(s => [...doc.querySelectorAll(s)]).map(el => {
       const ps = el.querySelectorAll('p');
       return clean(ps.length ? [...ps].map(p => p.textContent).join('\n\n') : el.textContent);
@@ -753,7 +755,13 @@ async function byIsbn(raw) {
   ]);
   // Google da buena sinopsis; todostuslibros, la editorial y los datos de la edición española
   let r = g[0] || null;
-  if (r && t) { const gs = r.sinopsis || ''; r = merge(r, t); if ((t.sinopsis || '').length > gs.length) r.sinopsis = t.sinopsis; if (t.editorial) r.editorial = t.editorial; if (t.coleccion) r.coleccion = t.coleccion; }
+  if (r && t) {
+    const gs = r.sinopsis || '';
+    r = merge(r, t);
+    // La de las librerías es la sinopsis de la editorial; la de Google suele venir recortada
+    if ((t.sinopsis || '').length > 60 && (!t._corta || t.sinopsis.length > gs.length)) r.sinopsis = t.sinopsis;
+    if (t.editorial) r.editorial = t.editorial; if (t.coleccion) r.coleccion = t.coleccion;
+  }
   else r = r || t;
   r = merge(r, o);
   if (!r) return [];
