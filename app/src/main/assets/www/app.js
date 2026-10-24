@@ -601,6 +601,13 @@ const looksIsbn = s => { const c = cleanIsbn(s); return (c.length === 10 || c.le
 const stripHtml = s => { const d = document.createElement('div'); d.innerHTML = String(s || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n'); return d.textContent.replace(/\n{3,}/g, '\n\n').trim(); };
 const httpsify = u => u ? u.replace(/^http:\/\//, 'https://') : u;
 const olCover = isbn => `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg?default=false`;
+// Portada de Amazon por ISBN-10 (si no la tiene devuelve una imagen de 1 píxel, que se descarta)
+const amzCover = isbn => { const i10 = isbn.length === 13 ? toIsbn10(isbn) : isbn; return i10 ? `https://images-na.ssl-images-amazon.com/images/P/${i10}.01.LZZZZZZZ.jpg` : ''; };
+const conMarca = u => /cegal\.es|todostuslibros/i.test(u || '');
+function coverList(isbn, list) {
+  const a = isbn ? amzCover(isbn) : '';
+  return [...new Set([a, ...(list || []), isbn ? olCover(isbn) : ''])].filter(u => u && !conMarca(u));
+}
 
 function gbMap(it) {
   const v = it.volumeInfo || {}, ids = v.industryIdentifiers || [];
@@ -689,7 +696,7 @@ async function ttlIsbn(isbn) {
     anio: (body.match(/(?:publicaci[oó]n|edici[oó]n)\s*:?\s*(?:\d{1,2}[\/-]\d{1,2}[\/-])?((?:19|20)\d{2})/i) || [])[1] || '',
     paginas: (body.match(/p[aá]ginas?\s*:?\s*(\d{2,4})/i) || [])[1] || '',
     isbn, idioma: 'es', sinopsis: syn, _corta: !full,
-    covers: img ? [img] : [], thumb: img
+    covers: [], thumb: ''
   };
 }
 // La sinopsis completa va debajo del título «Descripción» y antes de «Sobre autoría»
@@ -733,6 +740,32 @@ function ttlSynopsis(doc) {
   }
   return txt;
 }
+/* Quita de la sinopsis las citas de prensa y los elogios de otros autores */
+function limpiarSinopsis(t) {
+  t = String(t || '').replace(/\r/g, '').trim();
+  if (!t) return '';
+  const corte = t.search(/(La cr[ií]tica ha dicho|Lo que (ha dicho|dice) la cr[ií]tica|Cr[ií]ticas?\s*:|Rese[ñn]as\s*:|Han dicho\s*:|Elogios (a|de|para)|Opiniones de la cr[ií]tica|Premios\s*:|Sobre (el|la) autor(a)?\s*:)/i);
+  if (corte > 80) t = t.slice(0, corte).trim();
+  const citado = s => (s.match(/[«“"][^»”"]{6,}[»”"]/g) || []).reduce((n, q) => n + q.length, 0);
+  const atribucion = /[»”"]\s*[.,;:]?\s*[-—–(]?\s*(?:\p{Lu}[\p{L}'’.&-]*\s*){1,7}\)?\s*[.,]?\s*$/u;
+  const esCritica = s => {
+    const q = citado(s);
+    if (q && q >= s.length * 0.55) return true;
+    if (/^[«“"]/.test(s) && atribucion.test(s)) return true;
+    if (/^[-—–]\s*\p{Lu}/u.test(s) && s.length < 90) return true;
+    return false;
+  };
+  return t.split(/\n+/).map(par => {
+    const trozos = par.trim().split(/(?<=[.!?»”"])\s+(?=[«“"])/);
+    return trozos.filter(x => x.trim() && !esCritica(x.trim())).join(' ').trim();
+  }).filter(Boolean).join('\n\n');
+}
+function elegirSinopsis(tienda, tiendaCorta, google) {
+  const t = limpiarSinopsis(tienda), g = limpiarSinopsis(google);
+  if (t.length >= 120 && !tiendaCorta) return t;
+  if (g.length >= 120) return g;
+  return [t, g].sort((a, b) => b.length - a.length)[0] || '';
+}
 async function olSearchIsbn(isbn) {
   const r = await olSearch('isbn:' + isbn).catch(() => []);
   return r[0] ? { ...r[0], isbn } : null;
@@ -755,18 +788,16 @@ async function byIsbn(raw) {
   ]);
   // Google da buena sinopsis; todostuslibros, la editorial y los datos de la edición española
   let r = g[0] || null;
-  if (r && t) {
-    const gs = r.sinopsis || '';
-    r = merge(r, t);
-    // La de las librerías es la sinopsis de la editorial; la de Google suele venir recortada
-    if ((t.sinopsis || '').length > 60 && (!t._corta || t.sinopsis.length > gs.length)) r.sinopsis = t.sinopsis;
-    if (t.editorial) r.editorial = t.editorial; if (t.coleccion) r.coleccion = t.coleccion;
-  }
+  const gs = r ? r.sinopsis || '' : '';
+  if (r && t) { r = merge(r, t); if (t.editorial) r.editorial = t.editorial; if (t.coleccion) r.coleccion = t.coleccion; }
   else r = r || t;
   r = merge(r, o);
   if (!r) return [];
+  r.sinopsis = elegirSinopsis(t ? t.sinopsis : '', t && t._corta, gs);
+  delete r._corta;
   r.isbn = isbn;
-  r.covers = [...new Set([...(r.covers || []), olCover(isbn)])];
+  r.covers = coverList(isbn, r.covers);
+  if (!r.thumb || conMarca(r.thumb)) r.thumb = r.covers[0] || '';
   return [r];
 }
 async function searchBooks(q) {
@@ -784,7 +815,8 @@ async function enrich(r) {
   if (!r.editorial || !r.paginas || !r.covers.length) {
     try { r = merge(r, await olIsbn(r.isbn)); } catch (e) { }
   }
-  r.covers = [...new Set([...(r.covers || []), olCover(r.isbn)])];
+  r.covers = coverList(r.isbn, r.covers);
+  r.sinopsis = limpiarSinopsis(r.sinopsis);
   return r;
 }
 
@@ -870,7 +902,8 @@ function pickCover(v) {
           if (!r.covers.length || seen.has(r.covers[0])) continue; seen.add(r.covers[0]);
           opts.push({ urls: r.covers, thumb: r.thumb || r.covers[r.covers.length - 1], lab: [pubName(r.editorial), r.anio].filter(Boolean).join(' · ') });
         }
-        if (isbn.length >= 10 && !opts.length) opts.push({ urls: [olCover(isbn)], thumb: olCover(isbn), lab: 'Open Library' });
+        if (isbn.length >= 10) { const a = amzCover(isbn); if (a && !seen.has(a)) opts.unshift({ urls: [a], thumb: a, lab: 'Tu edición (ISBN)' }); }
+        opts = opts.filter(o => !conMarca(o.thumb));
       } catch (e) { }
       if (!opts.length) { out.innerHTML = '<div class="note">No he encontrado portadas. Prueba a hacerle una foto.</div>'; return; }
       out.innerHTML = '<div class="covergrid">' + opts.map((o, k) => `<button class="opt" data-k="${k}"><img src="${esc(o.thumb)}" alt="" loading="lazy">${o.lab ? `<span class="lab">${esc(o.lab)}</span>` : ''}</button>`).join('') + '</div>';
