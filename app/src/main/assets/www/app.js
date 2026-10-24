@@ -103,8 +103,8 @@ const TEMPLATES = ['tipo', 'bloque', 'franja', 'bandas', 'marco'];
 
 function normPub(s) {
   return plain(s)
-    .replace(/&/g, ' ')
-    .replace(/\b(editorial|editora|ediciones|edicions|edicion|editions|editores|ed|s ?a|s ?l|s ?a ?u|grupo|sello)\b\.?/g, ' ')
+    .replace(/[&.,]/g, ' ')
+    .replace(/\b(editorial|editora|ediciones|edicions|edicion|editions|editores|ed|s ?a ?u|s ?a|s ?l ?u|s ?l|grupo|sello)\b/g, ' ')
     .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 function pubKey(pub) {
@@ -603,7 +603,7 @@ function gbMap(it) {
   };
 }
 async function googleSearch(q) {
-  const j = await fetchJSON(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=20&printType=books`);
+  const j = await fetchJSON(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=20&printType=books&country=ES`);
   return (j.items || []).map(gbMap);
 }
 async function olIsbn(isbn) {
@@ -634,12 +634,79 @@ function merge(a, b) {
   o.thumb = a.thumb || b.thumb;
   return o;
 }
+function toIsbn10(i13) {
+  if (i13.length !== 13 || !i13.startsWith('978')) return '';
+  const b = i13.slice(3, 12); let s = 0;
+  for (let k = 0; k < 9; k++) s += (10 - k) * +b[k];
+  const d = (11 - s % 11) % 11;
+  return b + (d === 10 ? 'X' : String(d));
+}
+// "SHARPE, TOM" -> "Tom Sharpe"; "WILT" -> "Wilt"
+function niceName(s) {
+  s = String(s || '').trim(); if (!s) return '';
+  if (/^[^,]+,\s*[^,]+$/.test(s)) { const [ap, no] = s.split(','); s = no.trim() + ' ' + ap.trim(); }
+  if (s === s.toUpperCase()) s = s.toLowerCase().replace(/(^|[\s.'-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+  return s;
+}
+function niceTitle(s) {
+  s = String(s || '').trim();
+  if (s && s === s.toUpperCase() && /\p{L}/u.test(s)) { s = s.toLowerCase(); s = s.charAt(0).toUpperCase() + s.slice(1); }
+  return s;
+}
+// todostuslibros.com: catálogo de las librerías españolas (lo lee la parte nativa)
+async function ttlIsbn(isbn) {
+  if (!N || !N.httpGet) return null;
+  const html = await native('httpGet', 'https://www.todostuslibros.com/busquedas?keyword=' + isbn);
+  if (!html) return null;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const canon = (doc.querySelector('link[rel="canonical"]') || {}).getAttribute?.('href') || '';
+  if (!/\/libros\//.test(canon)) return null;
+  const meta = n => { const m = doc.querySelector(`meta[property="${n}"],meta[name="${n}"]`); return m ? (m.getAttribute('content') || '').trim() : ''; };
+  const h1 = doc.querySelector('h1');
+  const titulo = niceTitle((h1 && h1.textContent.replace(/\s+/g, ' ').trim()) || meta('og:title'));
+  if (!titulo) return null;
+  const txt = a => a ? a.textContent.replace(/\s+/g, ' ').trim() : '';
+  const body = (doc.body ? doc.body.textContent : '').replace(/\s+/g, ' ');
+  let img = meta('og:image'); if (img && img.startsWith('//')) img = 'https:' + img;
+  return {
+    titulo, subtitulo: '', autor: niceName(txt(doc.querySelector('a[href*="/creador/"]'))),
+    editorial: niceName(txt(doc.querySelector('a[href*="/editoriales/"]'))).replace(/[\s,]+S\.?\s?[AL]\.?(\s?U\.?)?$/i, ''),
+    coleccion: niceName(txt(doc.querySelector('a[href*="/colecciones/"],a[href*="/coleccion/"]'))),
+    anio: (body.match(/(?:publicaci[oó]n|edici[oó]n)\s*:?\s*(?:\d{1,2}[\/-]\d{1,2}[\/-])?((?:19|20)\d{2})/i) || [])[1] || '',
+    paginas: (body.match(/p[aá]ginas?\s*:?\s*(\d{2,4})/i) || [])[1] || '',
+    isbn, idioma: 'es', sinopsis: meta('description') || meta('og:description'),
+    covers: img ? [img] : [], thumb: img
+  };
+}
+async function olSearchIsbn(isbn) {
+  const r = await olSearch('isbn:' + isbn).catch(() => []);
+  return r[0] ? { ...r[0], isbn } : null;
+}
+async function gbIsbn(isbn) {
+  let g = await googleSearch('isbn:' + isbn).catch(() => []);
+  if (!g.length) {
+    const i10 = toIsbn10(isbn);
+    const extra = await googleSearch(isbn).catch(() => []);
+    g = extra.filter(x => x.isbn === isbn || (i10 && x.isbn === i10));
+  }
+  return g;
+}
 async function byIsbn(raw) {
   const isbn = cleanIsbn(raw);
-  const [g, o] = await Promise.all([googleSearch('isbn:' + isbn).catch(() => []), olIsbn(isbn).catch(() => null)]);
-  let res = g.length ? g.map(x => x.isbn === isbn || !x.isbn ? merge(x, o) : x) : (o ? [o] : []);
-  res.forEach(r => { if (!r.isbn) r.isbn = isbn; if (r.isbn) r.covers = [...new Set([...(r.covers || []), olCover(r.isbn)])]; });
-  return res;
+  const [g, t, o] = await Promise.all([
+    gbIsbn(isbn),
+    ttlIsbn(isbn).catch(() => null),
+    olIsbn(isbn).catch(() => null).then(x => x || olSearchIsbn(isbn))
+  ]);
+  // Google da buena sinopsis; todostuslibros, la editorial y los datos de la edición española
+  let r = g[0] || null;
+  if (r && t) { r = merge(r, t); if (t.editorial) r.editorial = t.editorial; if (t.coleccion) r.coleccion = t.coleccion; }
+  else r = r || t;
+  r = merge(r, o);
+  if (!r) return [];
+  r.isbn = isbn;
+  r.covers = [...new Set([...(r.covers || []), olCover(isbn)])];
+  return [r];
 }
 async function searchBooks(q) {
   if (looksIsbn(q)) return byIsbn(q);
@@ -678,12 +745,12 @@ function openAdd(autoScan) {
   const go = async (q) => {
     q = (q || input.value).trim(); if (!q) return;
     input.value = q; input.blur();
-    out.innerHTML = '<div class="loading"><div class="spin"></div></div>';
+    out.innerHTML = `<div class="loading"><div class="spin"></div></div>${looksIsbn(q) ? `<div class="note" style="padding-top:0">Buscando el ISBN ${esc(cleanIsbn(q))}…</div>` : ''}`;
     let res;
     try { res = await searchBooks(q); }
     catch (e) { out.innerHTML = '<div class="note">No hay conexión con el buscador. Comprueba internet o añádelo a mano.</div>'; return; }
     if (!res.length) {
-      out.innerHTML = `<div class="note">No he encontrado nada para “${esc(q)}”.</div>
+      out.innerHTML = `<div class="note">No he encontrado nada para ${looksIsbn(q) ? 'el ISBN' : ''} “${esc(q)}”.${looksIsbn(q) ? '<br>Prueba a buscarlo por título y autor.' : ''}</div>
         <div style="text-align:center"><button class="btn sec" data-m>${ic('pen')}Añadirlo a mano</button></div>`;
       $('[data-m]', out).onclick = () => openEdit(null, looksIsbn(q) ? { isbn: cleanIsbn(q) } : { titulo: q });
       return;
