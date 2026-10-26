@@ -180,7 +180,7 @@ function spineDims(b, size) {
 function spineHTML(b, w, h) {
   const st = styleFor(b.editorial);
   const fs = Math.max(6.5, Math.min(12.5, w * 0.36));
-  const seal = b.serie && b.numSerie ? String(b.numSerie) : (pubName(b.editorial) || '·').trim().charAt(0).toUpperCase();
+  const seal = (pubName(b.editorial) || '·').trim().charAt(0).toUpperCase();
   const bands = st.t === 'franja' ? '<div class="sp-band"></div>' : st.t === 'bandas' ? '<div class="sp-band a"></div><div class="sp-band b"></div>' : '';
   return `<div class="sp t-${st.t} f-${st.f}${w >= 34 ? ' wide' : ''}" style="${styleVars(st)};width:${w}px;height:${h}px;font-size:${fs}px">
     ${bands}<div class="sp-in">${b.autor ? `<span class="sp-a">${esc(shortAuthor(b.autor))}</span>` : ''}<span class="sp-t">${esc(b.titulo || 'Sin título')}</span></div>
@@ -311,7 +311,7 @@ function render() {
       for (const r of rows) {
         html += `<div class="row"><div class="books${spines ? ' spines' : ''}">`;
         for (const b of r) {
-          const mark = (b.estado === 'leido' ? '<span class="mark"></span>' : '') + (b.serie && b.numSerie ? `<span class="snum">${esc(b.numSerie)}</span>` : '');
+          const mark = b.estado === 'leido' ? '<span class="mark"></span>' : '';
           if (spines) { const d = spineDims(b, size); html += `<div class="bk" data-id="${b.id}">${spineHTML(b, d.w, d.h)}</div>`; }
           else html += `<div class="bk" data-id="${b.id}">${mark}${coverHTML(b)}</div>`;
         }
@@ -1345,7 +1345,7 @@ function openSettings() {
       <div class="listrow" data-imp>${ic('upload')}<div class="nm">Recuperar copia<small>Sustituye lo que hay ahora en la app</small></div></div>
       <h3 class="sec">Goodreads</h3>
       <div class="listrow" data-gr>${ic('book')}<div class="nm">Exportar para Goodreads<small>Archivo CSV con tus libros, notas, reseñas y estanterías</small></div></div>
-      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.3 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
+      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.4 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
     </div></div>`);
   const paintView = () => $$('[data-view] button', ov).forEach(b => b.classList.toggle('on', b.dataset.v === s.view));
   $$('[data-view] button', ov).forEach(b => b.onclick = () => { s.view = b.dataset.v; paintView(); save(); render(); });
