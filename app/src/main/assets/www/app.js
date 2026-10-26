@@ -33,7 +33,13 @@ const P = {
   wand: '<path d="m15 4 1 2 2 1-2 1-1 2-1-2-2-1 2-1zM4 20 15 9"/>',
   crop: '<path d="M6 2v14a2 2 0 0 0 2 2h14M2 6h14a2 2 0 0 1 2 2v14"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
-  book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M8 7h7"/>'
+  book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M8 7h7"/>',
+  heart: '<path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 7.5 2.8C19.5 15.4 12 20 12 20z"/>',
+  chart: '<path d="M4 20h16M7 16.5v-5M12 16.5V6M17 16.5v-8"/>',
+  tag: '<path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3-8.7 8.7z"/><circle cx="8" cy="8" r="1.4"/>',
+  folder: '<path d="M3 6.5a1.5 1.5 0 0 1 1.5-1.5h5l2 2.2h8a1.5 1.5 0 0 1 1.5 1.5V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/>',
+  scanmany: '<path d="M3 7.5V4h3.5M21 7.5V4h-3.5M3 16.5V20h3.5M21 16.5V20h-3.5M7.5 8v8M10.5 8v8M13.5 8v8M16.5 8v8"/>',
+  more: '<circle cx="12" cy="5.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="18.5" r="1.3"/>'
 };
 const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24">${P[n]}</svg>`;
 const STAR = '<path d="M12 2.8l2.75 5.82 6.35.8-4.66 4.4 1.2 6.3L12 17.03 6.36 20.12l1.2-6.3L2.9 9.42l6.35-.8z"/>';
@@ -67,7 +73,10 @@ function native(fn, ...args) {
 }
 
 /* ---------------- Estado ---------------- */
-const DEF_SETTINGS = { theme: 'roble', view: 'portadas', size: 1, sort: 'autor', group: false, filter: 'todos', styles: {} };
+const DEF_SETTINGS = { theme: 'roble', view: 'portadas', size: 1, sort: 'autor', group: false, filter: 'todos', styles: {}, shelves: [], shelf: '', goal: 0, backupNag: false };
+const DESEOS = '__deseos';
+const estadoDe = b => b.estado || 'pendiente';
+const enCasa = b => estadoDe(b) !== 'deseado';
 const state = { books: [], settings: { ...DEF_SETTINGS }, query: '' };
 
 function load() {
@@ -79,6 +88,9 @@ function load() {
       state.books = Array.isArray(d.books) ? d.books : [];
       state.settings = { ...DEF_SETTINGS, ...(d.settings || {}) };
       state.settings.styles = state.settings.styles || {};
+      state.settings.shelves = Array.isArray(state.settings.shelves) ? state.settings.shelves : [];
+      if (state.settings.shelf && state.settings.shelf !== DESEOS && !state.settings.shelves.includes(state.settings.shelf)) state.settings.shelf = '';
+      state.books.forEach(b => { if (!Array.isArray(b.etiquetas)) b.etiquetas = []; });
     } catch (e) { toast('No he podido leer los datos guardados'); }
   }
 }
@@ -144,6 +156,7 @@ function coverHTML(b, extraCls = '') {
   const inner = src ? `<img src="${esc(src)}" alt="" loading="lazy" data-fallback="${esc(b.id || '')}">` : genCover(b);
   return `<div class="cv ${extraCls}">${inner}</div>`;
 }
+const rescatadas = new Set();
 // Si una portada guardada no carga, se dibuja la de la editorial
 document.addEventListener('error', e => {
   const img = e.target;
@@ -151,6 +164,11 @@ document.addEventListener('error', e => {
   const b = byId(img.dataset.fallback) || { titulo: '', autor: '', editorial: '' };
   const d = document.createElement('div'); d.innerHTML = genCover(b);
   img.replaceWith(d.firstElementChild);
+  // Si la portada se perdió (por ejemplo al recuperar los datos en un móvil nuevo), se vuelve a descargar
+  if (b.id && N && Array.isArray(b.portadaUrls) && b.portadaUrls.length && !rescatadas.has(b.id)) {
+    rescatadas.add(b.id);
+    native('downloadCover', JSON.stringify(b.portadaUrls)).then(p => { if (p) { b.portada = p; save(); render(); } });
+  }
 }, true);
 
 function spineDims(b, size) {
@@ -189,7 +207,14 @@ const titleKey = t => String(t || '').replace(/^(el|la|los|las|lo|un|una|unos|un
 
 function visibleBooks() {
   const s = state.settings, q = plain(state.query).trim();
-  let list = state.books.filter(b => s.filter === 'todos' || (b.estado || 'pendiente') === s.filter);
+  const sh = s.shelf || '';
+  let list = state.books.filter(b => {
+    const est = estadoDe(b);
+    if (sh === DESEOS) return est === 'deseado';
+    if (est === 'deseado') return false;
+    if (sh && !(b.etiquetas || []).includes(sh)) return false;
+    return s.filter === 'todos' || est === s.filter;
+  });
   if (q) list = list.filter(b => plain([b.titulo, b.subtitulo, b.autor, b.editorial, b.coleccion, b.isbn].join(' ')).includes(q));
   return list.sort((SORTS[s.sort] || SORTS.autor).f);
 }
@@ -213,11 +238,32 @@ function applyTheme() {
 }
 
 function renderHeader() {
-  const total = state.books.length, leidos = state.books.filter(b => b.estado === 'leido').length;
+  const casa = state.books.filter(enCasa), total = casa.length, leidos = casa.filter(b => b.estado === 'leido').length;
   $('#count').textContent = total ? `${total} ${total === 1 ? 'libro' : 'libros'} · ${leidos} ${leidos === 1 ? 'leído' : 'leídos'}` : 'Tu estantería está esperando';
   $$('#filt button').forEach(b => b.classList.toggle('on', b.dataset.f === state.settings.filter));
+  $('#filt').classList.toggle('dim', state.settings.shelf === DESEOS);
+  renderShelfbar();
   $('#bSort').innerHTML = ic('sort') + esc(SORTS[state.settings.sort].c) + (state.settings.group ? ' · Ed.' : '');
   $('#bView').innerHTML = ic(state.settings.view === 'lomos' ? 'covers' : 'spines');
+}
+
+function renderShelfbar() {
+  const s = state.settings, bar = $('#shelfbar');
+  const nDes = state.books.filter(b => estadoDe(b) === 'deseado').length;
+  const cnt = n => state.books.filter(b => enCasa(b) && (b.etiquetas || []).includes(n)).length;
+  bar.innerHTML = `<button class="sh ${!s.shelf ? 'on' : ''}" data-sh="">Mi estantería</button>`
+    + `<button class="sh ${s.shelf === DESEOS ? 'on' : ''}" data-sh="${DESEOS}">${ic('heart')}Lista de deseos${nDes ? ` <b>${nDes}</b>` : ''}</button>`
+    + s.shelves.map(n => `<button class="sh ${s.shelf === n ? 'on' : ''}" data-sh="${esc(n)}">${ic('tag')}${esc(n)} <b>${cnt(n)}</b></button>`).join('')
+    + `<button class="sh add" data-shnew>${ic('plus')}Estantería</button>`;
+  const on = $('.sh.on', bar);
+  if (on && on.offsetLeft + on.offsetWidth > bar.scrollLeft + bar.clientWidth) bar.scrollLeft = on.offsetLeft - 14;
+}
+
+function backupBanner() {
+  const s = state.settings, b = backupState;
+  if (!N || !b || b.activa || s.backupNag || state.books.length < 5) return '';
+  return `<div class="nag">${ic('folder')}<div class="t"><b>Protege tu colección</b><span>Activa la copia automática para no perder tus libros si cambias de móvil.</span></div>
+    <div class="acts"><button class="btn" data-nag="on">Activar</button><button class="ib" data-nag="off" aria-label="Cerrar">${ic('close')}</button></div></div>`;
 }
 
 function render() {
@@ -230,12 +276,19 @@ function render() {
 
   if (!state.books.length) {
     html = `<div class="emptystate"><h2>Tu estantería está vacía</h2>
-      <p>Escanea el código de barras de un libro o búscalo por su título para colocarlo en la balda.</p>
-      <div class="btns"><button class="btn" data-act="scan">${ic('barcode')}Escanear</button>
+      <p>Escanea los códigos de barras de tus libros uno detrás de otro, o búscalos por su título, para colocarlos en las baldas.</p>
+      <div class="btns"><button class="btn" data-act="burst">${ic('scanmany')}Escanear libros</button>
       <button class="btn sec" data-act="add">${ic('search')}Buscar</button></div></div>`;
   } else {
     const list = visibleBooks();
-    if (!list.length) html = `<div class="emptystate"><p>${state.query ? 'Ningún libro coincide con la búsqueda.' : s.filter === 'leido' ? 'Todavía no has marcado ningún libro como leído.' : 'No tienes libros pendientes. ¡Enhorabuena!'}</p></div>`;
+    if (!list.length) {
+      const msg = state.query ? 'Ningún libro coincide con la búsqueda.'
+        : s.shelf === DESEOS ? 'Tu lista de deseos está vacía. Toca + para añadir los libros que te gustaría tener.'
+        : s.shelf && !state.books.some(b => enCasa(b) && (b.etiquetas || []).includes(s.shelf)) ? `Todavía no hay libros en «${esc(s.shelf)}». Abre un libro y márcalo en «Estanterías», o toca + con esta estantería elegida.`
+        : s.filter === 'leido' ? 'Todavía no has marcado ningún libro como leído.'
+        : s.filter === 'pendiente' ? 'No tienes libros pendientes. ¡Enhorabuena!' : 'No hay libros aquí.';
+      html = `<div class="emptystate"><p>${msg}</p></div>`;
+    }
     for (const g of groups(list)) {
       html += '<section class="group">';
       if (g.title) {
@@ -264,7 +317,7 @@ function render() {
     }
   }
   // Baldas vacías hasta llenar la pantalla, para que parezca una librería
-  box.innerHTML = html;
+  box.innerHTML = backupBanner() + html;
   const missing = Math.max(0, Math.ceil((window.innerHeight - box.getBoundingClientRect().bottom) / (rowH + 33)));
   if (missing) box.insertAdjacentHTML('beforeend', '<div class="row empty"><div class="books"></div><div class="plank"></div></div>'.repeat(Math.min(missing, 8)));
 }
@@ -306,6 +359,75 @@ function confirmBox(title, text, okText = 'Aceptar', danger = false) {
   });
 }
 
+function promptBox(title, { value = '', okText = 'Aceptar', placeholder = '', numeric = false, help = '' } = {}) {
+  return new Promise(res => {
+    let done = false;
+    const ov = openLayer(`<h2 style="margin:4px 0 6px;font-size:19px">${esc(title)}</h2>
+      ${help ? `<p class="muted" style="margin:0 0 12px;font-size:14px;line-height:1.45">${esc(help)}</p>` : ''}
+      <div class="field"><input value="${esc(value)}" maxlength="40" placeholder="${esc(placeholder)}" ${numeric ? 'inputmode="numeric"' : ''}></div>
+      <div style="display:flex;gap:10px"><button class="btn sec" style="flex:1" data-no>Cancelar</button>
+      <button class="btn" style="flex:1" data-yes>${esc(okText)}</button></div>`, 'sheet', () => { if (!done) res(null); });
+    const inp = $('input', ov);
+    setTimeout(() => { inp.focus(); inp.select(); }, 120);
+    const ok = () => { const v = inp.value.trim().replace(/\s+/g, ' '); if (!v) { inp.focus(); return; } done = true; res(v); closeLayer(); };
+    $('[data-yes]', ov).onclick = ok;
+    inp.onkeydown = e => { if (e.key === 'Enter') ok(); };
+    $('[data-no]', ov).onclick = () => closeLayer();
+  });
+}
+
+/* ---------------- Estanterías propias ---------------- */
+async function newShelf() {
+  const n = await promptBox('Nueva estantería', { okText: 'Crear', placeholder: 'Por ejemplo: Favoritos, Firmados…' });
+  if (!n) return null;
+  const s = state.settings;
+  const ya = s.shelves.find(x => x.toLowerCase() === n.toLowerCase());
+  if (ya) return ya;
+  s.shelves.push(n); saveNow(); renderShelfbar();
+  return n;
+}
+function openShelves() {
+  const s = state.settings;
+  const cnt = n => state.books.filter(b => (b.etiquetas || []).includes(n)).length;
+  const ov = openLayer(`
+    <div class="bar"><button class="ib" data-close>${ic('back')}</button><h2>Mis estanterías</h2></div>
+    <div class="scroll"><div class="pad" style="padding-top:4px">
+      <p class="muted" style="font-size:13.5px;line-height:1.45;margin:8px 0 6px">Agrupa tus libros como quieras: favoritos, firmados, primeras ediciones… Un libro puede estar en varias.</p>
+      <div class="shlist"></div>
+      <div style="margin-top:18px"><button class="btn sec" data-new>${ic('plus')}Nueva estantería</button></div>
+    </div></div>`);
+  const paint = () => {
+    $('.shlist', ov).innerHTML = s.shelves.length ? s.shelves.map((n, i) => `<div class="listrow" data-i="${i}">${ic('tag')}<div class="nm">${esc(n)}<small>${cnt(n)} ${cnt(n) === 1 ? 'libro' : 'libros'}</small></div>${ic('more')}</div>`).join('')
+      : '<div class="note">Todavía no has creado ninguna estantería.</div>';
+    $$('.shlist .listrow', ov).forEach(r => r.onclick = () => shelfMenu(s.shelves[+r.dataset.i], paint));
+  };
+  $('[data-new]', ov).onclick = async () => { if (await newShelf()) paint(); };
+  paint();
+}
+function shelfMenu(name, onDone) {
+  const s = state.settings;
+  const ov = openLayer(`<h2 style="margin:0 0 6px;font-size:19px">${esc(name)}</h2>
+    <div class="opts"><div class="o" data-a="ren">${ic('edit')}Cambiar el nombre</div><div class="o" data-a="del" style="color:#B3261E">${ic('trash')}Borrar la estantería</div></div>`, 'sheet');
+  $('[data-a="ren"]', ov).onclick = async () => {
+    closeLayer();
+    const n = await promptBox('Cambiar el nombre', { value: name, okText: 'Guardar' });
+    if (!n || n === name) return;
+    const destino = s.shelves.find(x => x !== name && x.toLowerCase() === n.toLowerCase()) || n;
+    s.shelves = [...new Set(s.shelves.map(x => x === name ? destino : x))];
+    state.books.forEach(b => { if ((b.etiquetas || []).includes(name)) b.etiquetas = [...new Set(b.etiquetas.map(x => x === name ? destino : x))]; });
+    if (s.shelf === name) s.shelf = destino;
+    saveNow(); render(); onDone && onDone();
+  };
+  $('[data-a="del"]', ov).onclick = async () => {
+    closeLayer();
+    if (!await confirmBox(`¿Borrar «${name}»?`, 'Los libros no se borran: solo dejan de estar en esta estantería.', 'Borrar', true)) return;
+    s.shelves = s.shelves.filter(x => x !== name);
+    state.books.forEach(b => { b.etiquetas = (b.etiquetas || []).filter(x => x !== name); });
+    if (s.shelf === name) s.shelf = '';
+    saveNow(); render(); onDone && onDone();
+  };
+}
+
 /* ---------------- Ficha del libro ---------------- */
 function openDetail(id) {
   const b = byId(id); if (!b) return;
@@ -314,7 +436,7 @@ function openDetail(id) {
   const fecha = b.creado ? new Date(b.creado).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
   const facts = [
     ['Editorial', pubName(b.editorial)], ['Colección', b.coleccion], ['Año', b.anio], ['Páginas', b.paginas],
-    ['ISBN', b.isbn], ['Idioma', langName(b.idioma)], ['En tu estantería', fecha && 'desde el ' + fecha]
+    ['ISBN', b.isbn], ['Idioma', langName(b.idioma)], [estadoDe(b) === 'deseado' ? 'En tu lista de deseos' : 'En tu estantería', fecha && 'desde el ' + fecha]
   ].filter(f => f[1]);
   const ov = openLayer(`
     <div class="bar"><button class="ib" data-close>${ic('back')}</button><h2></h2>
@@ -331,6 +453,7 @@ function openDetail(id) {
         <div class="status">
           <button data-st="pendiente">${ic('clock')}Pendiente</button>
           <button data-st="leido">${ic('check')}Leído</button>
+          <button data-st="deseado">${ic('heart')}Lo quiero</button>
         </div>
         <div class="readdate" ${b.estado === 'leido' ? '' : 'hidden'}>Lo terminé el <input type="date" value="${esc(b.fechaLeido || '')}"></div>
 
@@ -340,6 +463,9 @@ function openDetail(id) {
         <h3 class="sec">Mi reseña</h3>
         <textarea class="review" placeholder="¿Qué te ha parecido?">${esc(b.resena || '')}</textarea>
         <div class="saved"></div>
+
+        <h3 class="sec">Estanterías</h3>
+        <div class="tags"></div>
 
         <h3 class="sec">Sinopsis</h3>
         ${b.sinopsis ? `<div class="synopsis">${esc(b.sinopsis)}</div>`
@@ -356,12 +482,35 @@ function openDetail(id) {
     $('.readdate', ov).hidden = b.estado !== 'leido';
   };
   $$('.status button', ov).forEach(x => x.onclick = () => {
+    const antes = estadoDe(b);
     b.estado = x.dataset.st;
+    if (antes === 'deseado' && b.estado !== 'deseado') toast('Pasa a tu estantería');
+    if (b.estado === 'deseado' && antes !== 'deseado') toast('Pasa a tu lista de deseos');
     if (b.estado === 'leido' && !b.fechaLeido) { b.fechaLeido = new Date().toISOString().slice(0, 10); $('.readdate input', ov).value = b.fechaLeido; }
     paintStatus(); save(); render();
   });
   $('.readdate input', ov).onchange = e => { b.fechaLeido = e.target.value; save(); };
   paintStatus();
+
+  // Estanterías propias
+  const paintTags = () => {
+    const mias = b.etiquetas || (b.etiquetas = []);
+    $('.tags', ov).innerHTML = state.settings.shelves.map(n => `<button class="sh ${mias.includes(n) ? 'on' : ''}" data-tg="${esc(n)}">${mias.includes(n) ? ic('check') : ic('tag')}${esc(n)}</button>`).join('')
+      + `<button class="sh add" data-tgnew>${ic('plus')}Nueva</button>`;
+  };
+  $('.tags', ov).onclick = async e => {
+    const t = e.target.closest('[data-tg]');
+    if (t) {
+      const n = t.dataset.tg, mias = b.etiquetas || (b.etiquetas = []);
+      b.etiquetas = mias.includes(n) ? mias.filter(x => x !== n) : [...mias, n];
+      paintTags(); save(); render(); return;
+    }
+    if (e.target.closest('[data-tgnew]')) {
+      const n = await newShelf();
+      if (n) { b.etiquetas = [...new Set([...(b.etiquetas || []), n])]; paintTags(); save(); render(); }
+    }
+  };
+  paintTags();
 
   // Puntuación
   starWidget($('.stars', ov), $('.ratelabel', ov), b.nota || 0, v => { b.nota = v; save(); if (state.settings.sort === 'nota') render(); });
@@ -425,7 +574,9 @@ const FIELDS = [
 function openEdit(book, preset, afterSave) {
   const isNew = !book;
   const d = Object.assign({ titulo: '', subtitulo: '', autor: '', editorial: '', coleccion: '', anio: '', paginas: '', isbn: '', idioma: 'es', sinopsis: '', portada: '' }, book || {}, preset || {});
-  const draft = { portada: d.portada || '', candidatos: (preset && preset.covers) || [], cambio: false };
+  const draft = { portada: d.portada || '', candidatos: (preset && preset.covers) || [], cambio: false, urls: d.portadaUrls || null };
+  const s0 = state.settings;
+  let dest = (preset && preset._dest) || (s0.shelf === DESEOS ? 'deseos' : 'estanteria');
   const pubs = [...new Set(state.books.map(b => b.editorial).filter(Boolean))].sort(collator.compare);
   const f = (k, l, t) => `<div class="field"><label>${l}</label><input data-k="${k}" ${t === 'num' ? 'inputmode="numeric"' : ''} ${k === 'editorial' ? 'list="pubs"' : ''} value="${esc(d[k])}"></div>`;
   const ov = openLayer(`
@@ -441,6 +592,7 @@ function openEdit(book, preset, afterSave) {
           <button class="btn sec" data-c="generada">${ic('wand')}Usar la de la editorial</button>
         </div></div>
       <div class="dl-note muted" style="font-size:13px;margin:-8px 0 14px" hidden></div>
+      ${isNew ? `<div class="field"><label>Añadir a</label><div class="pick" data-dest><button data-v="estanteria">Mi estantería</button><button data-v="deseos">${ic('heart')}Lista de deseos</button></div></div>` : ''}
       ${f('titulo', 'Título')}${f('subtitulo', 'Subtítulo')}${f('autor', 'Autor')}
       ${f('editorial', 'Editorial')}<datalist id="pubs">${pubs.map(p => `<option value="${esc(p)}">`).join('')}</datalist>
       ${f('coleccion', 'Colección')}
@@ -462,6 +614,9 @@ function openEdit(book, preset, afterSave) {
     $('[data-c="recortar"]', ov).hidden = !(draft.portada && !/^https?:/.test(draft.portada));
   };
   paintCover();
+  const paintDest = () => $$('[data-dest] button', ov).forEach(x => x.classList.toggle('on', x.dataset.v === dest));
+  $$('[data-dest] button', ov).forEach(x => x.onclick = () => { dest = x.dataset.v; paintDest(); });
+  paintDest();
   const syn = $('[data-k="sinopsis"]', ov);
   const grow = () => { syn.style.height = 'auto'; syn.style.height = Math.max(160, syn.scrollHeight + 4) + 'px'; };
   syn.addEventListener('input', grow); requestAnimationFrame(grow);
@@ -479,7 +634,7 @@ function openEdit(book, preset, afterSave) {
   const setLocal = path => { if (path) { draft.portada = path; draft.candidatos = []; draft.cambio = true; paintCover(); } };
   $$('[data-c]', ov).forEach(btn => btn.onclick = async () => {
     const c = btn.dataset.c;
-    if (c === 'generada') { draft.portada = ''; draft.candidatos = []; draft.cambio = true; paintCover(); return; }
+    if (c === 'generada') { draft.portada = ''; draft.candidatos = []; draft.urls = null; draft.cambio = true; paintCover(); return; }
     if (c === 'buscar') {
       const v = read();
       const picked = await pickCover(v);
@@ -487,24 +642,25 @@ function openEdit(book, preset, afterSave) {
         note.hidden = false; note.textContent = 'Descargando la portada…';
         const path = N ? await native('downloadCover', JSON.stringify(picked)) : picked[0];
         note.hidden = true;
-        if (path) setLocal(path); else toast('No he podido descargar esa portada');
+        if (path) { setLocal(path); draft.urls = picked; } else toast('No he podido descargar esa portada');
       }
       return;
     }
     if (!N) { toast('Disponible en el móvil'); return; }
     if (c === 'foto' || c === 'galeria') {
       const path = await native(c === 'foto' ? 'takePhoto' : 'pickImage');
-      if (path) { const cropped = await cropImage(path); setLocal(cropped || path); }
+      if (path) { const cropped = await cropImage(path); setLocal(cropped || path); draft.urls = null; }
       return;
     }
-    if (c === 'recortar') { const cropped = await cropImage(draft.portada); if (cropped) setLocal(cropped); }
+    if (c === 'recortar') { const cropped = await cropImage(draft.portada); if (cropped) { const u = draft.urls; setLocal(cropped); draft.urls = u; } }
   });
 
   $('[data-save]', ov).onclick = async () => {
     const v = read();
     if (!v.titulo) { toast('Ponle al menos un título'); $('[data-k="titulo"]', ov).focus(); return; }
     v.isbn = v.isbn.replace(/[^0-9Xx]/g, '').toUpperCase();
-    const target = book || { id: uid(), creado: Date.now(), estado: 'pendiente', nota: 0, resena: '' };
+    const tagNuevo = s0.shelf && s0.shelf !== DESEOS ? [s0.shelf] : [];
+    const target = book || { id: uid(), creado: Date.now(), estado: dest === 'deseos' ? 'deseado' : 'pendiente', nota: 0, resena: '', etiquetas: tagNuevo };
     if (isNew && v.isbn && state.books.some(x => x.isbn === v.isbn)) {
       if (!await confirmBox('Ya lo tienes', 'Hay un libro con ese mismo ISBN en tu estantería. ¿Añadirlo otra vez?', 'Añadir igualmente')) return;
     }
@@ -512,12 +668,13 @@ function openEdit(book, preset, afterSave) {
     Object.assign(target, v);
     if (draft.cambio || isNew) {
       target.portada = draft.portada;
+      target.portadaUrls = draft.portada ? draft.urls : (draft.candidatos.length ? draft.candidatos : null);
       if (old && old !== draft.portada && N && !/^(data:|https?:)/.test(old)) N.deleteCover(old);
     }
     if (isNew) state.books.push(target);
     saveNow(); render(); closeLayer();
     if (isNew) closeAllAdd();
-    toast(isNew ? 'Colocado en la estantería' : 'Cambios guardados');
+    toast(isNew ? (target.estado === 'deseado' ? 'Añadido a tu lista de deseos' : 'Colocado en la estantería') : 'Cambios guardados');
     // Descarga de la portada en segundo plano
     if (!target.portada && draft.candidatos.length) {
       const path = N ? await native('downloadCover', JSON.stringify(draft.candidatos)) : draft.candidatos[0];
@@ -828,7 +985,8 @@ function openAdd(autoScan) {
     <div class="bar"><button class="ib" data-close>${ic('close')}</button><h2>Añadir libro</h2></div>
     <div class="scroll"><div class="pad">
       <div class="bigbtns">
-        <button class="bigbtn" data-scan>${ic('barcode')}Escanear el código de barras</button>
+        <button class="bigbtn" data-scan>${ic('barcode')}Escanear un libro</button>
+        <button class="bigbtn" data-burst>${ic('scanmany')}Escanear varios seguidos</button>
         <button class="bigbtn" data-manual>${ic('pen')}Escribirlo a mano</button>
       </div>
       <div class="searchrow"><input type="search" placeholder="Título, autor o ISBN" enterkeyhint="search"><button class="btn">${ic('search')}</button></div>
@@ -872,7 +1030,93 @@ function openAdd(autoScan) {
     if (code) go(code);
   };
   $('[data-scan]', ov).onclick = scan;
+  $('[data-burst]', ov).onclick = burstScan;
   if (autoScan) scan();
+}
+
+/* ---------------- Escaneo en ráfaga ---------------- */
+async function burstScan() {
+  if (!N || !N.scanBurst) { toast('El escáner funciona en el móvil'); return; }
+  const tengo = [...new Set(state.books.map(b => cleanIsbn(b.isbn)).filter(x => x.length === 13))];
+  const raw = await native('scanBurst', JSON.stringify(tengo));
+  if (raw === null) return;
+  let codes = [];
+  try { codes = JSON.parse(raw); } catch (e) { }
+  codes = [...new Set(codes)].filter(code => !tengo.includes(code));
+  if (!codes.length) { toast('No se ha escaneado ningún libro nuevo'); return; }
+  closeAllAdd();
+  processBurst(codes);
+}
+function processBurst(codes) {
+  const s = state.settings;
+  const deseo = s.shelf === DESEOS;
+  const tag = s.shelf && !deseo ? s.shelf : '';
+  let hechos = 0, fallos = 0, terminado = false;
+  const ov = openLayer(`
+    <div class="bar"><button class="ib" data-close>${ic('close')}</button><h2>${deseo ? 'A tu lista de deseos' : tag ? 'A «' + esc(tag) + '»' : 'Añadiendo libros'}</h2></div>
+    <div class="scroll"><div class="pad" style="padding-top:12px">
+      <div class="bprog"><div class="btxt"></div><div class="bbar"><i></i></div></div>
+      <div class="blist">${codes.map((code, i) => `<div class="brow" data-i="${i}"><div class="thumb"><div class="spin sm"></div></div>
+        <div class="bi"><div class="t">En espera…</div><div class="m">ISBN ${code}</div></div><div class="bs"></div></div>`).join('')}</div>
+    </div></div>
+    <div class="bfoot"><button class="btn" data-close>Hecho</button></div>`);
+  const paint = () => {
+    const n = hechos + fallos;
+    $('.bbar i', ov).style.width = (n / codes.length * 100) + '%';
+    $('.btxt', ov).textContent = terminado
+      ? `${hechos} ${hechos === 1 ? 'libro añadido' : 'libros añadidos'}${fallos ? ` · ${fallos} sin encontrar` : ''}`
+      : `Buscando ${Math.min(n + 1, codes.length)} de ${codes.length}…`;
+  };
+  paint();
+  (async () => {
+    for (let i = 0; i < codes.length; i++) {
+      const code = codes[i], row = $(`.brow[data-i="${i}"]`, ov);
+      $('.t', row).textContent = 'Buscando…';
+      let r = null;
+      try { r = (await byIsbn(code))[0] || null; } catch (e) { }
+      if (r && r.titulo) {
+        const b = {
+          id: uid(), creado: Date.now(), estado: deseo ? 'deseado' : 'pendiente', nota: 0, resena: '', etiquetas: tag ? [tag] : [],
+          titulo: r.titulo, subtitulo: r.subtitulo || '', autor: r.autor || '', editorial: r.editorial || '', coleccion: r.coleccion || '',
+          anio: r.anio || '', paginas: r.paginas || '', isbn: code, idioma: r.idioma || '', sinopsis: r.sinopsis || '',
+          portada: '', portadaUrls: r.covers || []
+        };
+        state.books.push(b); hechos++; saveNow(); render();
+        row.dataset.id = b.id; row.classList.add('ok');
+        $('.thumb', row).innerHTML = coverHTML(b);
+        $('.t', row).textContent = b.titulo;
+        $('.m', row).textContent = [b.autor, pubName(b.editorial)].filter(Boolean).join(' · ');
+        $('.bs', row).innerHTML = ic('check');
+        if (N && b.portadaUrls.length) native('downloadCover', JSON.stringify(b.portadaUrls)).then(p => {
+          if (!p) return;
+          b.portada = p; save(); render();
+          const th = $('.thumb', row); if (th) th.innerHTML = coverHTML(b);
+        });
+      } else {
+        fallos++; row.classList.add('ko');
+        $('.thumb', row).innerHTML = `<div class="cv">${genCover({ id: '', titulo: '?', autor: '', editorial: '' })}</div>`;
+        $('.t', row).textContent = 'No lo he encontrado';
+        $('.bs', row).innerHTML = `<button class="chip" data-man="${code}">${ic('pen')}A mano</button>`;
+      }
+      paint();
+      await new Promise(res => setTimeout(res, 250));
+    }
+    terminado = true; paint();
+  })();
+  $('.blist', ov).addEventListener('click', e => {
+    const man = e.target.closest('[data-man]');
+    if (man) {
+      const row = man.closest('.brow');
+      openEdit(null, { isbn: man.dataset.man, _dest: deseo ? 'deseos' : 'estanteria' }, () => {
+        row.classList.remove('ko'); row.classList.add('ok');
+        $('.t', row).textContent = 'Añadido a mano';
+        $('.bs', row).innerHTML = ic('check');
+      });
+      return;
+    }
+    const row = e.target.closest('.brow.ok');
+    if (row && row.dataset.id) openDetail(row.dataset.id);
+  });
 }
 
 /* ---------------- Elegir portada ---------------- */
@@ -957,12 +1201,15 @@ function openSettings() {
       <div class="themes">${THEMES.map(([k, n]) => `<div class="th ${s.theme === k ? 'on' : ''}" data-t="${k}">${themePreview(k)}<div class="nm">${n}</div></div>`).join('')}</div>
       <h3 class="sec">Editoriales</h3>
       <div class="listrow" data-styles>${ic('palette')}<div class="nm">Estilos de editorial<small>Colores de lomos y portadas dibujadas</small></div>${ic('chevron')}</div>
+      <h3 class="sec">Estanterías</h3>
+      <div class="listrow" data-shelves>${ic('tag')}<div class="nm">Mis estanterías<small>Crear, cambiar de nombre o borrar</small></div>${ic('chevron')}</div>
       <h3 class="sec">Copia de seguridad</h3>
-      <div class="listrow" data-exp>${ic('download')}<div class="nm">Guardar copia<small>Libros, reseñas y portadas en un archivo</small></div></div>
+      <div class="listrow" data-auto>${ic('folder')}<div class="nm">Copia automática<small class="autoinfo"></small></div>${ic('chevron')}</div>
+      <div class="listrow" data-exp>${ic('download')}<div class="nm">Guardar una copia ahora<small>Libros, reseñas y portadas en un archivo</small></div></div>
       <div class="listrow" data-imp>${ic('upload')}<div class="nm">Recuperar copia<small>Sustituye lo que hay ahora en la app</small></div></div>
       <h3 class="sec">Goodreads</h3>
       <div class="listrow" data-gr>${ic('book')}<div class="nm">Exportar para Goodreads<small>Archivo CSV con tus libros, notas, reseñas y leídos/pendientes</small></div></div>
-      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.0 · Datos de libros de Google Books y Open Library</p>
+      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.1 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
     </div></div>`);
   const paintView = () => $$('[data-view] button', ov).forEach(b => b.classList.toggle('on', b.dataset.v === s.view));
   $$('[data-view] button', ov).forEach(b => b.onclick = () => { s.view = b.dataset.v; paintView(); save(); render(); });
@@ -972,6 +1219,10 @@ function openSettings() {
     s.theme = t.dataset.t; $$('.th', ov).forEach(x => x.classList.toggle('on', x === t)); applyTheme(); render(); save();
   });
   $('[data-styles]', ov).onclick = openStyles;
+  $('[data-shelves]', ov).onclick = openShelves;
+  const paintAuto = () => { $('.autoinfo', ov).textContent = autoText(); };
+  paintAuto();
+  $('[data-auto]', ov).onclick = () => autoBackupMenu(paintAuto);
   $('[data-exp]', ov).onclick = async () => {
     if (!N) { toast('Disponible en el móvil'); return; }
     saveNow();
@@ -994,6 +1245,56 @@ function openSettings() {
   };
 }
 
+/* ---------------- Copia automática ---------------- */
+let backupState = null;
+function refreshBackup() {
+  try { backupState = N && N.backupInfo ? JSON.parse(N.backupInfo()) : null; } catch (e) { backupState = null; }
+  return backupState;
+}
+function cuando(ms) {
+  if (!ms) return 'todavía ninguna';
+  const d = new Date(ms), hoy = new Date(), ayer = new Date(Date.now() - 864e5);
+  const hora = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === hoy.toDateString()) return 'hoy a las ' + hora;
+  if (d.toDateString() === ayer.toDateString()) return 'ayer a las ' + hora;
+  return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' });
+}
+function autoText() {
+  const b = refreshBackup();
+  if (!N || !b) return 'Disponible en el móvil';
+  if (!b.activa) return 'Desactivada · toca para elegir una carpeta';
+  return `Activada en «${b.carpeta || 'tu carpeta'}» · última: ${cuando(b.ultima)}`;
+}
+async function chooseBackupFolder() {
+  if (!N || !N.chooseBackupFolder) { toast('Disponible en el móvil'); return false; }
+  if (!await confirmBox('Elige una carpeta', 'Se abrirá el selector de carpetas. Te recomiendo crear una llamada «Mi biblioteca» dentro de Documentos y pulsar «Usar esta carpeta». Cada día que uses la app se guardará allí una copia con tus libros, reseñas y portadas, y se conservan las 7 últimas.', 'Elegir carpeta')) return false;
+  const r = await native('chooseBackupFolder');
+  refreshBackup();
+  if (r === 'ok') { toast('Copia automática activada'); render(); return true; }
+  if (r) toast('No he podido guardar en esa carpeta. Prueba con otra.');
+  return false;
+}
+function autoBackupMenu(onDone) {
+  const b = refreshBackup();
+  if (!N || !b) { toast('Disponible en el móvil'); return; }
+  if (!b.activa) { chooseBackupFolder().then(() => onDone && onDone()); return; }
+  const ov = openLayer(`<h2 style="margin:0 0 4px;font-size:19px">Copia automática</h2>
+    <p class="muted" style="margin:0 0 8px;font-size:14px;line-height:1.45">Se guarda sola en «${esc(b.carpeta || 'tu carpeta')}» cada día que haces cambios. Última copia: ${cuando(b.ultima)}.</p>
+    <div class="opts">
+      <div class="o" data-a="now">${ic('download')}Hacer una copia ahora</div>
+      <div class="o" data-a="chg">${ic('folder')}Cambiar de carpeta</div>
+      <div class="o" data-a="off" style="color:#B3261E">${ic('close')}Desactivar</div>
+    </div>`, 'sheet');
+  $('[data-a="now"]', ov).onclick = async () => {
+    closeLayer(); saveNow(); toast('Guardando copia…');
+    const r = await native('backupNow');
+    toast(r === 'ok' ? 'Copia guardada' : 'No se ha podido guardar. Vuelve a elegir la carpeta.');
+    onDone && onDone();
+  };
+  $('[data-a="chg"]', ov).onclick = async () => { closeLayer(); await chooseBackupFolder(); onDone && onDone(); };
+  $('[data-a="off"]', ov).onclick = () => { closeLayer(); N.disableBackup(); refreshBackup(); render(); onDone && onDone(); toast('Copia automática desactivada'); };
+}
+
 /* CSV con el formato de exportación de Goodreads, que es el que acepta su importador */
 function goodreadsCsv() {
   const q = v => { const s = String(v ?? ''); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
@@ -1002,12 +1303,14 @@ function goodreadsCsv() {
   const rows = state.books.map(b => {
     const isbn = cleanIsbn(b.isbn);
     const autores = String(b.autor || '').split(/\s*[,;&]\s*|\s+y\s+/).filter(Boolean);
-    const leido = b.estado === 'leido';
+    const leido = b.estado === 'leido', deseado = estadoDe(b) === 'deseado';
+    const slug = n => plain(n).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const estantes = [...(b.etiquetas || []).map(slug), ...(deseado ? ['lista-de-deseos'] : [])].filter(Boolean).join(', ');
     return [
       b.titulo, autores[0] || '', autores.slice(1).join(', '),
       isbn.length === 10 ? isbn : toIsbn10(isbn), isbn.length === 13 ? isbn : '',
       b.nota || 0, pubName(b.editorial), b.paginas || '', b.anio || '',
-      leido ? fecha(b.fechaLeido) : '', fecha(b.creado), '', leido ? 'read' : 'to-read', b.resena || '', 1
+      leido ? fecha(b.fechaLeido) : '', fecha(b.creado), estantes, leido ? 'read' : 'to-read', b.resena || '', deseado ? 0 : 1
     ].map(q).join(',');
   });
   return [head.join(','), ...rows].join('\r\n');
@@ -1070,6 +1373,153 @@ function openStyleEdit(key, name, onDone) {
   preview();
 }
 
+/* ---------------- Estadísticas ---------------- */
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const anioDe = b => (/^(\d{4})-/.exec(b.fechaLeido || '') || [])[1] || '';
+const fmt = n => Number(n).toLocaleString('es-ES');
+
+// Barras finas de una sola serie; al tocar una barra se ve su valor
+function barChart(labels, values, nombres) {
+  const W = 340, H = 168, top = 14, bottom = 24, left = 26, right = 6;
+  const max = Math.max(1, ...values);
+  const paso = max <= 5 ? 1 : max <= 10 ? 2 : max <= 25 ? 5 : Math.ceil(max / 5 / 5) * 5;
+  const techo = Math.ceil(max / paso) * paso;
+  const y = v => top + (H - top - bottom) * (1 - v / techo);
+  const slot = (W - left - right) / labels.length;
+  const bw = Math.max(4, Math.min(18, slot * 0.56));
+  let g = '';
+  for (let v = 0; v <= techo; v += paso) {
+    g += `<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" class="${v === 0 ? 'base' : 'grid'}"/>`
+      + `<text x="${left - 7}" y="${y(v) + 3.5}" class="yl">${v}</text>`;
+  }
+  const bars = values.map((v, i) => {
+    const x = left + slot * i + (slot - bw) / 2, yb = y(0), h = yb - y(v), r = Math.min(4, h, bw / 2);
+    const d = v ? `M${x},${yb}V${yb - h + r}Q${x},${yb - h} ${x + r},${yb - h}H${x + bw - r}Q${x + bw},${yb - h} ${x + bw},${yb - h + r}V${yb}Z` : '';
+    return `<g class="b" data-i="${i}"><rect x="${left + slot * i}" y="${top}" width="${slot}" height="${H - top}" fill="transparent"/>${d ? `<path d="${d}"/>` : ''}
+      <text x="${left + slot * i + slot / 2}" y="${H - 7}" class="xl">${esc(labels[i])}</text></g>`;
+  }).join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Libros leídos">${g}${bars}</svg>
+    <div class="cap">Toca una barra para ver cuántos libros</div>
+    <table class="sr-only"><tr><th>Periodo</th><th>Libros</th></tr>${values.map((v, i) => `<tr><td>${esc(nombres[i])}</td><td>${v}</td></tr>`).join('')}</table></div>`;
+}
+
+function openStats() {
+  const s = state.settings;
+  const hoy = new Date(), esteAnio = String(hoy.getFullYear());
+  let sel = esteAnio;
+  const ov = openLayer(`
+    <div class="bar"><button class="ib" data-close>${ic('back')}</button><h2>Estadísticas</h2></div>
+    <div class="scroll"><div class="pad stats" style="padding-top:10px"></div></div>`);
+  const box = $('.stats', ov);
+
+  const paint = () => {
+    const casa = state.books.filter(enCasa);
+    const leidosTodos = casa.filter(b => b.estado === 'leido');
+    const anios = [...new Set(leidosTodos.map(anioDe).filter(Boolean))].sort().reverse();
+    if (!anios.includes(esteAnio)) anios.unshift(esteAnio);
+    const leidos = sel === 'todo' ? leidosTodos : leidosTodos.filter(b => anioDe(b) === sel);
+    const sinFecha = leidosTodos.filter(b => !anioDe(b)).length;
+    const paginas = leidos.reduce((t, b) => t + (parseInt(b.paginas, 10) || 0), 0);
+    const notas = leidos.filter(b => b.nota > 0);
+    const media = notas.length ? notas.reduce((t, b) => t + b.nota, 0) / notas.length : 0;
+    const pendientes = casa.filter(b => estadoDe(b) === 'pendiente').length;
+    const deseados = state.books.length - casa.length;
+    const periodo = sel === 'todo' ? 'en total' : sel === esteAnio ? 'este año' : 'en ' + sel;
+
+    // Reto anual (solo para el año en curso)
+    let reto = '';
+    if (sel === esteAnio) {
+      const n = leidos.length;
+      if (s.goal > 0) {
+        const pct = Math.min(100, n / s.goal * 100);
+        const inicio = new Date(hoy.getFullYear(), 0, 1), fin = new Date(hoy.getFullYear() + 1, 0, 1);
+        const esperado = s.goal * (hoy - inicio) / (fin - inicio);
+        const dif = Math.round(n - esperado);
+        const ritmo = n >= s.goal ? '¡Reto conseguido!' : dif > 0 ? `Vas ${dif} ${dif === 1 ? 'libro' : 'libros'} por delante del ritmo` : dif < 0 ? `Vas ${-dif} ${dif === -1 ? 'libro' : 'libros'} por detrás del ritmo` : 'Vas justo al ritmo';
+        reto = `<div class="goal"><div class="gh"><b>Reto ${esteAnio}</b><button class="more" data-goal>Cambiar</button></div>
+          <div class="gn"><span>${n}</span> de ${s.goal} libros</div>
+          <div class="gbar"><i style="width:${pct}%"></i></div><div class="gr">${ritmo}</div></div>`;
+      } else {
+        reto = `<div class="goal empty"><div><b>Reto ${esteAnio}</b><span>Ponte un objetivo de libros para este año</span></div><button class="btn" data-goal>Ponerme un reto</button></div>`;
+      }
+    }
+
+    // Gráfico
+    let chart = '';
+    if (sel === 'todo') {
+      const ys = anios.filter(a => leidosTodos.some(b => anioDe(b) === a)).map(Number);
+      if (ys.length) {
+        const desde = Math.max(Math.min(...ys), Math.max(...ys) - 9), hasta = Math.max(...ys, +esteAnio);
+        const lab = [], val = [];
+        for (let a = desde; a <= hasta; a++) { lab.push(String(a).slice(2)); val.push(leidosTodos.filter(b => anioDe(b) === String(a)).length); }
+        chart = `<h3 class="sec">Libros leídos por año</h3>${barChart(lab.map(l => "'" + l), val, lab.map(l => '20' + l))}`;
+      }
+    } else if (leidos.length) {
+      const val = MESES.map((m, i) => leidos.filter(b => +(b.fechaLeido || '').slice(5, 7) === i + 1).length);
+      chart = `<h3 class="sec">Libros leídos por mes</h3>${barChart(['E', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'], val, MESES.map(m => m + ' ' + sel))}`;
+    }
+
+    // Rankings
+    const contar = key => {
+      const m = new Map();
+      for (const b of leidos) { const k = key(b); if (k) m.set(k, (m.get(k) || 0) + 1); }
+      return [...m.entries()].sort((a, b) => b[1] - a[1] || collator.compare(a[0], b[0])).slice(0, 5);
+    };
+    const autores = contar(b => String(b.autor || '').split(/\s*[,;&]\s*/)[0].trim());
+    const edits = contar(b => b.editorial ? pubName(b.editorial) : '');
+    const mejores = [...notas].sort((a, b) => b.nota - a.nota || collator.compare(titleKey(a.titulo), titleKey(b.titulo))).slice(0, 5);
+    const rank = (lista, pinta) => lista.length ? `<div class="rank">${lista.map(pinta).join('')}</div>` : '<div class="muted" style="font-size:14px">Sin datos todavía.</div>';
+
+    box.innerHTML = `
+      <div class="pick years">${anios.map(a => `<button data-y="${a}" class="${sel === a ? 'on' : ''}">${a}</button>`).join('')}<button data-y="todo" class="${sel === 'todo' ? 'on' : ''}">Siempre</button></div>
+      ${reto}
+      <div class="tiles">
+        <div class="tile"><b>${fmt(leidos.length)}</b><span>${leidos.length === 1 ? 'libro leído' : 'libros leídos'} ${periodo}</span></div>
+        <div class="tile"><b>${fmt(paginas)}</b><span>páginas leídas ${periodo}</span></div>
+        <div class="tile"><b>${media ? media.toLocaleString('es-ES', { maximumFractionDigits: 1 }) : '–'}</b><span>nota media${notas.length ? ` (${notas.length} ${notas.length === 1 ? 'puntuado' : 'puntuados'})` : ''}</span></div>
+        <div class="tile"><b>${fmt(pendientes)}</b><span>${pendientes === 1 ? 'libro pendiente' : 'libros pendientes'} en casa</span></div>
+      </div>
+      ${chart || (sel !== 'todo' ? `<div class="note">Aún no has terminado ningún libro ${periodo}.<br>Al marcar un libro como leído se apunta la fecha.</div>` : '')}
+      ${sinFecha && sel !== 'todo' ? `<div class="muted" style="font-size:12.5px;margin-top:6px">${sinFecha} ${sinFecha === 1 ? 'libro leído no tiene' : 'libros leídos no tienen'} fecha de lectura y solo cuentan en «Siempre».</div>` : ''}
+      <h3 class="sec">Autores más leídos</h3>
+      ${rank(autores, ([n, k]) => `<div class="rk"><span class="nm">${esc(n)}</span><span class="ct">${k}</span></div>`)}
+      <h3 class="sec">Editoriales que más lees</h3>
+      ${rank(edits, ([n, k]) => { const st = styleFor(n); return `<div class="rk"><span class="nm"><span class="tagp" style="--pbg:${st.bg};--pfg:${st.fg}">${esc(n)}</span></span><span class="ct">${k}</span></div>`; })}
+      <h3 class="sec">Tus mejor valorados</h3>
+      ${rank(mejores, b => `<div class="rk bkr" data-id="${b.id}"><div class="mini">${coverHTML(b)}</div><span class="nm">${esc(b.titulo)}<small>${esc(b.autor || '')}</small></span><span class="ct star">${String(b.nota).replace('.', ',')} ★</span></div>`)}
+      <h3 class="sec">Tu colección</h3>
+      <dl class="facts">
+        <dt>Libros en casa</dt><dd>${fmt(casa.length)}</dd>
+        <dt>Leídos</dt><dd>${fmt(leidosTodos.length)}${casa.length ? ` (${Math.round(leidosTodos.length / casa.length * 100)} %)` : ''}</dd>
+        <dt>Páginas en las baldas</dt><dd>${fmt(casa.reduce((t, b) => t + (parseInt(b.paginas, 10) || 0), 0))}</dd>
+        <dt>Editoriales distintas</dt><dd>${fmt(new Set(casa.map(b => pubKey(b.editorial)).filter(Boolean)).size)}</dd>
+        <dt>En tu lista de deseos</dt><dd>${fmt(deseados)}</dd>
+      </dl>`;
+
+    $$('[data-y]', box).forEach(x => x.onclick = () => { sel = x.dataset.y; paint(); });
+    const g = $('[data-goal]', box);
+    if (g) g.onclick = async () => {
+      const v = await promptBox(`Reto ${esteAnio}`, { value: s.goal ? String(s.goal) : '', numeric: true, okText: 'Guardar', placeholder: 'Por ejemplo: 24', help: '¿Cuántos libros quieres leer este año? Pon 0 para quitar el reto.' });
+      if (v === null) return;
+      s.goal = Math.max(0, parseInt(v, 10) || 0); save(); paint();
+    };
+    $$('.bkr', box).forEach(r => r.onclick = () => openDetail(r.dataset.id));
+    const ch = $('.chart', box);
+    if (ch) {
+      const nombres = [...ch.querySelectorAll('td:first-child')].map(td => td.textContent);
+      const vals = [...ch.querySelectorAll('td:last-child')].map(td => +td.textContent);
+      ch.querySelector('svg').addEventListener('click', e => {
+        const b = e.target.closest('.b'); if (!b) return;
+        const i = +b.dataset.i;
+        $$('.b', ch).forEach(x => x.classList.toggle('sel', x === b));
+        ch.classList.add('hasSel');
+        ch.querySelector('.cap').textContent = `${nombres[i].charAt(0).toUpperCase() + nombres[i].slice(1)}: ${vals[i]} ${vals[i] === 1 ? 'libro' : 'libros'}`;
+      });
+    }
+  };
+  paint();
+}
+
 /* ---------------- Búsqueda en la colección ---------------- */
 function toggleSearch(show) {
   const bar = $('#searchbar'), q = $('#q');
@@ -1082,6 +1532,8 @@ function toggleSearch(show) {
 function init() {
   load();
   $('#bSearch').innerHTML = ic('search');
+  $('#bStats').innerHTML = ic('chart');
+  refreshBackup();
   $('#bMenu').innerHTML = ic('menu');
   $('#fab').innerHTML = ic('plus');
   applyTheme();
@@ -1090,8 +1542,23 @@ function init() {
   $('#shelves').addEventListener('click', e => {
     const bk = e.target.closest('.bk'); if (bk) return openDetail(bk.dataset.id);
     const act = e.target.closest('[data-act]');
-    if (act) openAdd(act.dataset.act === 'scan');
+    if (act) { if (act.dataset.act === 'burst') burstScan(); else openAdd(act.dataset.act === 'scan'); return; }
+    const nag = e.target.closest('[data-nag]');
+    if (nag) {
+      if (nag.dataset.nag === 'off') { state.settings.backupNag = true; save(); render(); }
+      else chooseBackupFolder();
+    }
   });
+  $('#shelfbar').addEventListener('click', async e => {
+    const s = state.settings;
+    const b = e.target.closest('[data-sh]');
+    if (b) { s.shelf = b.dataset.sh; save(); render(); window.scrollTo(0, 0); return; }
+    if (e.target.closest('[data-shnew]')) {
+      const n = await newShelf();
+      if (n) { s.shelf = n; save(); render(); }
+    }
+  });
+  $('#bStats').onclick = openStats;
   $('#fab').onclick = () => openAdd(false);
   $('#bMenu').onclick = openSettings;
   $('#bSort').onclick = openSort;
@@ -1099,6 +1566,7 @@ function init() {
   $('#bSearch').onclick = () => toggleSearch($('#searchbar').hidden);
   $('#q').oninput = debounce(e => { state.query = e.target.value; render(); }, 150);
   $$('#filt button').forEach(b => b.onclick = () => { state.settings.filter = b.dataset.f; save(); render(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshBackup(); render(); } });
   let lastW = window.innerWidth;
   window.addEventListener('resize', debounce(() => { if (window.innerWidth !== lastW) { lastW = window.innerWidth; render(); } }, 150));
 }
