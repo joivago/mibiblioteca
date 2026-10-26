@@ -261,7 +261,7 @@ function renderShelfbar() {
 
 function backupBanner() {
   const s = state.settings, b = backupState;
-  if (!N || !b || b.activa || s.backupNag || state.books.length < 5) return '';
+  if (!N || !b || b.activa || s.backupNag || s.shelf || state.books.length < 5) return '';
   return `<div class="nag">${ic('folder')}<div class="t"><b>Protege tu colección</b><span>Activa la copia automática para no perder tus libros si cambias de móvil.</span></div>
     <div class="acts"><button class="btn" data-nag="on">Activar</button><button class="ib" data-nag="off" aria-label="Cerrar">${ic('close')}</button></div></div>`;
 }
@@ -1208,7 +1208,7 @@ function openSettings() {
       <div class="listrow" data-exp>${ic('download')}<div class="nm">Guardar una copia ahora<small>Libros, reseñas y portadas en un archivo</small></div></div>
       <div class="listrow" data-imp>${ic('upload')}<div class="nm">Recuperar copia<small>Sustituye lo que hay ahora en la app</small></div></div>
       <h3 class="sec">Goodreads</h3>
-      <div class="listrow" data-gr>${ic('book')}<div class="nm">Exportar para Goodreads<small>Archivo CSV con tus libros, notas, reseñas y leídos/pendientes</small></div></div>
+      <div class="listrow" data-gr>${ic('book')}<div class="nm">Exportar para Goodreads<small>Archivo CSV con tus libros, notas, reseñas y estanterías</small></div></div>
       <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.1 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
     </div></div>`);
   const paintView = () => $$('[data-view] button', ov).forEach(b => b.classList.toggle('on', b.dataset.v === s.view));
