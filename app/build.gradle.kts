@@ -11,8 +11,8 @@ android {
         applicationId = "com.ivan.mibiblioteca"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
     }
 
     // Firma fija: así cada versión nueva se instala encima de la anterior

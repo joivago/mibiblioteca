@@ -180,7 +180,7 @@ function spineDims(b, size) {
 function spineHTML(b, w, h) {
   const st = styleFor(b.editorial);
   const fs = Math.max(6.5, Math.min(12.5, w * 0.36));
-  const seal = (pubName(b.editorial) || '·').trim().charAt(0).toUpperCase();
+  const seal = b.serie && b.numSerie ? String(b.numSerie) : (pubName(b.editorial) || '·').trim().charAt(0).toUpperCase();
   const bands = st.t === 'franja' ? '<div class="sp-band"></div>' : st.t === 'bandas' ? '<div class="sp-band a"></div><div class="sp-band b"></div>' : '';
   return `<div class="sp t-${st.t} f-${st.f}${w >= 34 ? ' wide' : ''}" style="${styleVars(st)};width:${w}px;height:${h}px;font-size:${fs}px">
     ${bands}<div class="sp-in">${b.autor ? `<span class="sp-a">${esc(shortAuthor(b.autor))}</span>` : ''}<span class="sp-t">${esc(b.titulo || 'Sin título')}</span></div>
@@ -193,10 +193,14 @@ function shortAuthor(a) {
 }
 
 /* ---------------- Orden, filtro y grupos ---------------- */
+// Los libros de una saga van juntos (en el sitio que le toca al nombre de la saga) y por su número
+const sagaKey = b => titleKey(b.serie ? b.serie : b.titulo);
+const numSaga = b => { const n = parseFloat(String(b.numSerie || '').replace(',', '.')); return isNaN(n) ? 999 : n; };
+const porSaga = (a, b) => cmp(sagaKey(a), sagaKey(b)) || (a.serie && b.serie ? numSaga(a) - numSaga(b) : 0) || cmp(titleKey(a.titulo), titleKey(b.titulo));
 const SORTS = {
-  autor: { c: 'Autor', n: 'Autor (A–Z)', f: (a, b) => cmp(a.autor, b.autor) || cmp(titleKey(a.titulo), titleKey(b.titulo)) },
-  titulo: { c: 'Título', n: 'Título (A–Z)', f: (a, b) => cmp(titleKey(a.titulo), titleKey(b.titulo)) },
-  editorial: { c: 'Editorial', n: 'Editorial y título (A–Z)', f: (a, b) => cmp(pubName(a.editorial), pubName(b.editorial)) || cmp(titleKey(a.titulo), titleKey(b.titulo)) },
+  autor: { c: 'Autor', n: 'Autor (A–Z)', f: (a, b) => cmp(a.autor, b.autor) || porSaga(a, b) },
+  titulo: { c: 'Título', n: 'Título (A–Z)', f: porSaga },
+  editorial: { c: 'Editorial', n: 'Editorial y título (A–Z)', f: (a, b) => cmp(pubName(a.editorial), pubName(b.editorial)) || porSaga(a, b) },
   anio: { c: 'Año', n: 'Año de publicación', f: (a, b) => (parseInt(a.anio) || 9999) - (parseInt(b.anio) || 9999) || cmp(a.autor, b.autor) },
   nota: { c: 'Nota', n: 'Mi puntuación', f: (a, b) => (b.nota || 0) - (a.nota || 0) || cmp(titleKey(a.titulo), titleKey(b.titulo)) },
   recientes: { c: 'Recientes', n: 'Añadidos recientemente', f: (a, b) => (b.creado || 0) - (a.creado || 0) }
@@ -215,7 +219,7 @@ function visibleBooks() {
     if (sh && !(b.etiquetas || []).includes(sh)) return false;
     return s.filter === 'todos' || est === s.filter;
   });
-  if (q) list = list.filter(b => plain([b.titulo, b.subtitulo, b.autor, b.editorial, b.coleccion, b.isbn].join(' ')).includes(q));
+  if (q) list = list.filter(b => plain([b.titulo, b.subtitulo, b.autor, b.editorial, b.coleccion, b.serie, b.isbn].join(' ')).includes(q));
   return list.sort((SORTS[s.sort] || SORTS.autor).f);
 }
 function groups(list) {
@@ -307,7 +311,7 @@ function render() {
       for (const r of rows) {
         html += `<div class="row"><div class="books${spines ? ' spines' : ''}">`;
         for (const b of r) {
-          const mark = b.estado === 'leido' ? '<span class="mark"></span>' : '';
+          const mark = (b.estado === 'leido' ? '<span class="mark"></span>' : '') + (b.serie && b.numSerie ? `<span class="snum">${esc(b.numSerie)}</span>` : '');
           if (spines) { const d = spineDims(b, size); html += `<div class="bk" data-id="${b.id}">${spineHTML(b, d.w, d.h)}</div>`; }
           else html += `<div class="bk" data-id="${b.id}">${mark}${coverHTML(b)}</div>`;
         }
@@ -448,6 +452,7 @@ function openDetail(id) {
         <div class="dtitle">${esc(b.titulo || 'Sin título')}</div>
         ${b.subtitulo ? `<div class="dsub">${esc(b.subtitulo)}</div>` : ''}
         <div class="dauthor">${esc(b.autor || 'Autor desconocido')}</div>
+        ${b.serie ? `<button class="dsaga" data-saga>${ic('book')}${esc(b.serie)}${b.numSerie ? ` · nº ${esc(b.numSerie)}` : ''}</button>` : ''}
         ${b.editorial ? `<div class="pubpill"><span style="--pbg:${st.bg};--pfg:${st.fg}">${esc(pubName(b.editorial))}</span></div>` : ''}
 
         <div class="status">
@@ -526,6 +531,12 @@ function openDetail(id) {
     if (syn.scrollHeight > syn.clientHeight + 4) { more.hidden = false; more.onclick = () => { syn.classList.remove('clamp'); more.hidden = true; }; }
   });
 
+  const sg = $('[data-saga]', ov);
+  if (sg) sg.onclick = () => {
+    closeLayer();
+    state.settings.shelf = ''; state.settings.filter = 'todos';
+    toggleSearch(true); $('#q').value = b.serie; state.query = b.serie; render();
+  };
   $('[data-edit]', ov).onclick = () => openEdit(b, null, () => { closeLayer(); openDetail(b.id); });
   $('[data-del]', ov).onclick = async () => {
     if (!await confirmBox('¿Quitar este libro?', `“${b.titulo}” desaparecerá de tu estantería, con su puntuación y su reseña.`, 'Quitar', true)) return;
@@ -573,7 +584,8 @@ const FIELDS = [
 ];
 function openEdit(book, preset, afterSave) {
   const isNew = !book;
-  const d = Object.assign({ titulo: '', subtitulo: '', autor: '', editorial: '', coleccion: '', anio: '', paginas: '', isbn: '', idioma: 'es', sinopsis: '', portada: '' }, book || {}, preset || {});
+  const d = Object.assign({ titulo: '', subtitulo: '', autor: '', editorial: '', coleccion: '', serie: '', numSerie: '', anio: '', paginas: '', isbn: '', idioma: 'es', sinopsis: '', portada: '' }, book || {}, preset || {});
+  const sagas = [...new Set(state.books.map(b => b.serie).filter(Boolean))].sort(collator.compare);
   const draft = { portada: d.portada || '', candidatos: (preset && preset.covers) || [], cambio: false, urls: d.portadaUrls || null };
   const s0 = state.settings;
   let dest = (preset && preset._dest) || (s0.shelf === DESEOS ? 'deseos' : 'estanteria');
@@ -596,6 +608,9 @@ function openEdit(book, preset, afterSave) {
       ${f('titulo', 'Título')}${f('subtitulo', 'Subtítulo')}${f('autor', 'Autor')}
       ${f('editorial', 'Editorial')}<datalist id="pubs">${pubs.map(p => `<option value="${esc(p)}">`).join('')}</datalist>
       ${f('coleccion', 'Colección')}
+      <div class="saga2"><div class="field"><label>Saga o serie</label><input data-k="serie" list="sagas" value="${esc(d.serie)}" placeholder="Por ejemplo: El capitán Alatriste"></div>
+        <div class="field"><label>Nº</label><input data-k="numSerie" inputmode="decimal" value="${esc(d.numSerie)}"></div></div>
+      <datalist id="sagas">${sagas.map(x => `<option value="${esc(x)}">`).join('')}</datalist>
       <div class="two">${f('anio', 'Año', 'num')}${f('paginas', 'Páginas', 'num')}</div>
       <div class="two">${f('isbn', 'ISBN')}${f('idioma', 'Idioma')}</div>
       <div class="field"><label style="display:flex;align-items:center">Sinopsis<button class="more" data-refetch style="margin:0 0 0 auto">Buscar la completa</button></label><textarea data-k="sinopsis">${esc(d.sinopsis)}</textarea></div>
@@ -775,7 +790,8 @@ function gbMap(it) {
   return {
     titulo: v.title || '', subtitulo: v.subtitle || '', autor: (v.authors || []).join(', '), editorial: v.publisher || '',
     anio: (v.publishedDate || '').slice(0, 4), paginas: v.pageCount || '', isbn: i13 || i10 || '', idioma: v.language || '',
-    sinopsis: stripHtml(v.description), covers, thumb: img
+    sinopsis: stripHtml(v.description), covers, thumb: img,
+    _numSerie: v.seriesInfo && v.seriesInfo.bookDisplayNumber ? v.seriesInfo.bookDisplayNumber : ''
   };
 }
 async function googleSearch(q) {
@@ -955,6 +971,7 @@ async function byIsbn(raw) {
   r.isbn = isbn;
   r.covers = coverList(isbn, r.covers);
   if (!r.thumb || conMarca(r.thumb)) r.thumb = r.covers[0] || '';
+  detectarSaga(r);
   return [r];
 }
 async function searchBooks(q) {
@@ -967,7 +984,34 @@ async function searchBooks(q) {
   if (res === null) throw new Error('red');
   return res;
 }
+/* Saga y número a partir del título o el subtítulo:
+   «Limpieza de sangre (Las aventuras del capitán Alatriste 2)», «Saga X, 3», «Libro 2 de la trilogía Y»… */
+function detectarSaga(r) {
+  if (!r || r.serie) return r;
+  const num = '(\\d{1,2}(?:[.,]5)?|[IVX]{1,4})';
+  const romano = s => { const v = { I: 1, V: 5, X: 10 }; let t = 0; for (let i = 0; i < s.length; i++) { const a = v[s[i]], b = v[s[i + 1]] || 0; t += a < b ? -a : a; } return t; };
+  const n = s => /^[IVX]+$/.test(s) ? String(romano(s)) : s.replace(',', '.');
+  const marca = '(?:n[.ºo°]?\\s*|núm\\.?\\s*|vol(?:umen)?\\.?\\s*|libro\\s+|tomo\\s+|parte\\s+|#)?';
+  const limpio = s => s.replace(/^[\s,.:;–—-]+|[\s,.:;–—-]+$/g, '').replace(/^(?:saga|serie|trilog[ií]a|tetralog[ií]a)\s*:?\s*/i, m => /:/.test(m) ? '' : m).trim();
+  const t = String(r.titulo || ''), st = String(r.subtitulo || '');
+  // 1) Entre paréntesis al final del título: «Título (Saga 2)»
+  let m = new RegExp('^(.*?)\\s*\\(([^()]*?\\D)[\\s,.:#-]*' + marca + num + '\\)\\s*$', 'i').exec(t);
+  if (m && limpio(m[2]).length > 2) { r.titulo = m[1].trim(); r.serie = limpio(m[2]); r.numSerie = n(m[3]); return r; }
+  // 2) «Libro 2 de la saga X» en el título o el subtítulo
+  for (const s of [st, t]) {
+    m = new RegExp('(?:libro|tomo|volumen|vol\\.|parte|entrega)\\s+' + num + '\\s+(?:de\\s+la|del|de)\\s+(.+)$', 'i').exec(s);
+    if (m && limpio(m[2]).length > 2) { r.serie = limpio(m[2]); r.numSerie = n(m[1]); if (s === st) r.subtitulo = ''; return r; }
+  }
+  // 3) El subtítulo es «Saga 3» o «Saga, libro 3»
+  m = new RegExp('^(.*?\\D)[\\s,.:#-]*' + marca + num + '$', 'i').exec(st.trim());
+  if (m && limpio(m[1]).length > 2 && /[a-záéíóúñ]/i.test(m[1])) { r.serie = limpio(m[1]); r.numSerie = n(m[2]); r.subtitulo = ''; return r; }
+  // 4) Google a veces da solo el número
+  if (r._numSerie && r.coleccion) { r.serie = r.coleccion; r.numSerie = String(r._numSerie); }
+  return r;
+}
+
 async function enrich(r) {
+  detectarSaga(r);
   if (!r.isbn) return r;
   if (!r.editorial || !r.paginas || !r.covers.length) {
     try { r = merge(r, await olIsbn(r.isbn)); } catch (e) { }
@@ -1078,6 +1122,7 @@ function processBurst(codes) {
         const b = {
           id: uid(), creado: Date.now(), estado: deseo ? 'deseado' : 'pendiente', nota: 0, resena: '', etiquetas: tag ? [tag] : [],
           titulo: r.titulo, subtitulo: r.subtitulo || '', autor: r.autor || '', editorial: r.editorial || '', coleccion: r.coleccion || '',
+          serie: r.serie || '', numSerie: r.numSerie || '',
           anio: r.anio || '', paginas: r.paginas || '', isbn: code, idioma: r.idioma || '', sinopsis: r.sinopsis || '',
           portada: '', portadaUrls: r.covers || []
         };
@@ -1203,13 +1248,14 @@ function openSettings() {
       <div class="listrow" data-styles>${ic('palette')}<div class="nm">Estilos de editorial<small>Colores de lomos y portadas dibujadas</small></div>${ic('chevron')}</div>
       <h3 class="sec">Estanterías</h3>
       <div class="listrow" data-shelves>${ic('tag')}<div class="nm">Mis estanterías<small>Crear, cambiar de nombre o borrar</small></div>${ic('chevron')}</div>
+      <div class="listrow" data-sagas>${ic('book')}<div class="nm">Buscar sagas en mis libros<small>Detecta la saga y el número por el título</small></div></div>
       <h3 class="sec">Copia de seguridad</h3>
       <div class="listrow" data-auto>${ic('folder')}<div class="nm">Copia automática<small class="autoinfo"></small></div>${ic('chevron')}</div>
       <div class="listrow" data-exp>${ic('download')}<div class="nm">Guardar una copia ahora<small>Libros, reseñas y portadas en un archivo</small></div></div>
       <div class="listrow" data-imp>${ic('upload')}<div class="nm">Recuperar copia<small>Sustituye lo que hay ahora en la app</small></div></div>
       <h3 class="sec">Goodreads</h3>
       <div class="listrow" data-gr>${ic('book')}<div class="nm">Exportar para Goodreads<small>Archivo CSV con tus libros, notas, reseñas y estanterías</small></div></div>
-      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.1 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
+      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.2 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
     </div></div>`);
   const paintView = () => $$('[data-view] button', ov).forEach(b => b.classList.toggle('on', b.dataset.v === s.view));
   $$('[data-view] button', ov).forEach(b => b.onclick = () => { s.view = b.dataset.v; paintView(); save(); render(); });
@@ -1220,6 +1266,16 @@ function openSettings() {
   });
   $('[data-styles]', ov).onclick = openStyles;
   $('[data-shelves]', ov).onclick = openShelves;
+  $('[data-sagas]', ov).onclick = () => {
+    let n = 0;
+    for (const b of state.books) {
+      if (b.serie) continue;
+      const r = detectarSaga({ titulo: b.titulo, subtitulo: b.subtitulo });
+      if (r.serie) { b.titulo = r.titulo; b.subtitulo = r.subtitulo; b.serie = r.serie; b.numSerie = r.numSerie; n++; }
+    }
+    if (n) { saveNow(); render(); }
+    toast(n ? `Saga encontrada en ${n} ${n === 1 ? 'libro' : 'libros'}` : 'No he encontrado sagas en los títulos. Puedes ponerla a mano al editar un libro.');
+  };
   const paintAuto = () => { $('.autoinfo', ov).textContent = autoText(); };
   paintAuto();
   $('[data-auto]', ov).onclick = () => autoBackupMenu(paintAuto);
