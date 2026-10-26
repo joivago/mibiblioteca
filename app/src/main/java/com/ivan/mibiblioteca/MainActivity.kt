@@ -515,7 +515,8 @@ class MainActivity : AppCompatActivity() {
         fun httpGet(cb: String, url: String) {
             hilos.execute {
                 val host = try { URL(url).host } catch (e: Exception) { "" }
-                val texto = if (host == "todostuslibros.com" || host.endsWith(".todostuslibros.com"))
+                val permitidos = listOf("todostuslibros.com", "goodreads.com")
+                val texto = if (permitidos.any { host == it || host.endsWith(".$it") })
                     descargar(url)?.toString(Charsets.UTF_8) else null
                 resolver(cb, texto)
             }

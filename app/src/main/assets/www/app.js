@@ -452,7 +452,8 @@ function openDetail(id) {
         <div class="dtitle">${esc(b.titulo || 'Sin título')}</div>
         ${b.subtitulo ? `<div class="dsub">${esc(b.subtitulo)}</div>` : ''}
         <div class="dauthor">${esc(b.autor || 'Autor desconocido')}</div>
-        ${b.serie ? `<button class="dsaga" data-saga>${ic('book')}${esc(b.serie)}${b.numSerie ? ` · nº ${esc(b.numSerie)}` : ''}</button>` : ''}
+        ${b.serie ? `<button class="dsaga" data-saga>${ic('book')}${esc(b.serie)}${b.numSerie ? ` · nº ${esc(b.numSerie)}` : ''}</button>`
+      : `<button class="dsaga nos" data-findsaga>${ic('search')}¿Es de una saga? Buscar</button>`}
         ${b.editorial ? `<div class="pubpill"><span style="--pbg:${st.bg};--pfg:${st.fg}">${esc(pubName(b.editorial))}</span></div>` : ''}
 
         <div class="status">
@@ -531,6 +532,13 @@ function openDetail(id) {
     if (syn.scrollHeight > syn.clientHeight + 4) { more.hidden = false; more.onclick = () => { syn.classList.remove('clamp'); more.hidden = true; }; }
   });
 
+  const fs = $('[data-findsaga]', ov);
+  if (fs) fs.onclick = async () => {
+    fs.disabled = true; fs.lastChild.textContent = 'Buscando…';
+    const r = await buscarSaga(b);
+    if (r) { ponerSaga(b, r); saveNow(); render(); closeLayer(); openDetail(b.id); toast(`${r.serie}${r.numSerie ? ', nº ' + r.numSerie : ''}`); }
+    else { fs.disabled = false; fs.lastChild.textContent = 'No la encuentro: ponla al editar'; }
+  };
   const sg = $('[data-saga]', ov);
   if (sg) sg.onclick = () => {
     closeLayer();
@@ -629,6 +637,14 @@ function openEdit(book, preset, afterSave) {
     $('[data-c="recortar"]', ov).hidden = !(draft.portada && !/^https?:/.test(draft.portada));
   };
   paintCover();
+  if (isNew && !d.serie && (d.isbn || d.titulo)) {
+    buscarSaga(d).then(r => {
+      if (!r || !document.body.contains(ov)) return;
+      const s1 = $('[data-k="serie"]', ov), n1 = $('[data-k="numSerie"]', ov);
+      if (!s1.value) { s1.value = r.serie; if (!n1.value) n1.value = r.numSerie || ''; }
+      if (r.titulo && $('[data-k="titulo"]', ov).value === d.titulo) $('[data-k="titulo"]', ov).value = r.titulo;
+    });
+  }
   const paintDest = () => $$('[data-dest] button', ov).forEach(x => x.classList.toggle('on', x.dataset.v === dest));
   $$('[data-dest] button', ov).forEach(x => x.onclick = () => { dest = x.dataset.v; paintDest(); });
   paintDest();
@@ -1010,6 +1026,79 @@ function detectarSaga(r) {
   return r;
 }
 
+/* ---------------- Sagas en internet ---------------- */
+// Goodreads: buscando por ISBN abre la ficha del libro, que dice «Saga #N»;
+// buscando por título, la lista de resultados pone «Título (Saga, #N)»
+async function sagaGoodreads(b) {
+  if (!N || !N.httpGet) return null;
+  const isbn = cleanIsbn(b.isbn);
+  const porIsbn = isbn.length >= 10;
+  const q = porIsbn ? isbn : [b.titulo, b.autor ? shortAuthor(b.autor) : ''].filter(Boolean).join(' ');
+  if (!q) return null;
+  const html = await native('httpGet', 'https://www.goodreads.com/search?q=' + encodeURIComponent(q));
+  if (!html) return null;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const resultados = doc.querySelectorAll('a.bookTitle');
+  if (!resultados.length) {
+    const a = doc.querySelector('h3 a[href*="/series/"]') || doc.querySelector('a[href*="/series/"]');
+    if (!a) return null;
+    const m = /^(.*?)\s*#\s*([\d.,]+)\s*$/.exec(a.textContent.replace(/\s+/g, ' ').trim());
+    return m ? { serie: m[1].trim(), numSerie: m[2].replace(',', '.') } : null;
+  }
+  const quiero = plain(titleKey(b.titulo || ''));
+  for (const t of [...resultados].slice(0, 6)) {
+    const r = detectarSaga({ titulo: t.textContent.replace(/\s+/g, ' ').trim() });
+    if (!r.serie) continue;
+    const tengo = plain(titleKey(r.titulo));
+    if (porIsbn || (quiero && (tengo.includes(quiero) || quiero.includes(tengo)))) return { serie: r.serie, numSerie: r.numSerie };
+  }
+  return null;
+}
+// Wikidata: obras con «forma parte de la serie» (P179) y su número (P1545)
+async function sagaWikidata(b) {
+  const t = String(b.titulo || '').trim(); if (!t) return null;
+  const api = 'https://www.wikidata.org/w/api.php?origin=*&format=json&';
+  const s = await fetchJSON(api + 'action=wbsearchentities&language=es&uselang=es&type=item&limit=8&search=' + encodeURIComponent(t), 8000);
+  const ids = (s.search || []).filter(x => plain(x.label || x.match && x.match.text) === plain(t)).map(x => x.id).slice(0, 5);
+  if (!ids.length) return null;
+  const e = await fetchJSON(api + 'action=wbgetentities&props=claims&ids=' + ids.join('|'), 8000);
+  const apellido = plain(shortAuthor(b.autor || '')).split(' ').pop();
+  for (const id of ids) {
+    const cl = ((e.entities || {})[id] || {}).claims || {};
+    const p179 = (cl.P179 || [])[0];
+    const sid = p179 && p179.mainsnak.datavalue && p179.mainsnak.datavalue.value.id;
+    if (!sid) continue;
+    const q = ((p179.qualifiers || {}).P1545 || [])[0];
+    const num = (q && q.datavalue && q.datavalue.value) || '';
+    const autores = (cl.P50 || []).map(x => x.mainsnak.datavalue && x.mainsnak.datavalue.value.id).filter(Boolean);
+    const l = await fetchJSON(api + 'action=wbgetentities&props=labels&languages=es|en&ids=' + [sid, ...autores].join('|'), 8000);
+    const lab = id2 => { const L = ((l.entities || {})[id2] || {}).labels || {}; return (L.es || L.en || {}).value || ''; };
+    if (apellido && autores.length && !autores.some(a => plain(lab(a)).includes(apellido))) continue;
+    const nombre = lab(sid);
+    if (nombre) return { serie: nombre, numSerie: String(num) };
+  }
+  return null;
+}
+// Usa el mismo nombre de saga que ya tengas escrito, aunque cambien mayúsculas o el artículo
+function nombreSaga(n) {
+  const k = plain(titleKey(n));
+  const ya = state.books.map(b => b.serie).find(x => x && plain(titleKey(x)) === k);
+  return ya || n;
+}
+async function buscarSaga(b) {
+  const local = detectarSaga({ titulo: b.titulo, subtitulo: b.subtitulo });
+  if (local.serie) return { serie: nombreSaga(local.serie), numSerie: local.numSerie, titulo: local.titulo, subtitulo: local.subtitulo };
+  let r = null;
+  try { r = await sagaGoodreads(b); } catch (e) { }
+  if (!r) { try { r = await sagaWikidata(b); } catch (e) { } }
+  return r && r.serie ? { serie: nombreSaga(r.serie), numSerie: r.numSerie || '' } : null;
+}
+function ponerSaga(b, r) {
+  b.serie = r.serie; b.numSerie = r.numSerie || '';
+  if (r.titulo) b.titulo = r.titulo;
+  if (r.subtitulo !== undefined) b.subtitulo = r.subtitulo;
+}
+
 async function enrich(r) {
   detectarSaga(r);
   if (!r.isbn) return r;
@@ -1132,6 +1221,7 @@ function processBurst(codes) {
         $('.t', row).textContent = b.titulo;
         $('.m', row).textContent = [b.autor, pubName(b.editorial)].filter(Boolean).join(' · ');
         $('.bs', row).innerHTML = ic('check');
+        if (!b.serie) buscarSaga(b).then(sr => { if (sr && !b.serie) { ponerSaga(b, sr); save(); render(); } });
         if (N && b.portadaUrls.length) native('downloadCover', JSON.stringify(b.portadaUrls)).then(p => {
           if (!p) return;
           b.portada = p; save(); render();
@@ -1248,14 +1338,14 @@ function openSettings() {
       <div class="listrow" data-styles>${ic('palette')}<div class="nm">Estilos de editorial<small>Colores de lomos y portadas dibujadas</small></div>${ic('chevron')}</div>
       <h3 class="sec">Estanterías</h3>
       <div class="listrow" data-shelves>${ic('tag')}<div class="nm">Mis estanterías<small>Crear, cambiar de nombre o borrar</small></div>${ic('chevron')}</div>
-      <div class="listrow" data-sagas>${ic('book')}<div class="nm">Buscar sagas en mis libros<small>Detecta la saga y el número por el título</small></div></div>
+      <div class="listrow" data-sagas>${ic('book')}<div class="nm">Buscar sagas en mis libros<small>Busca en internet la saga y el número de cada libro</small></div></div>
       <h3 class="sec">Copia de seguridad</h3>
       <div class="listrow" data-auto>${ic('folder')}<div class="nm">Copia automática<small class="autoinfo"></small></div>${ic('chevron')}</div>
       <div class="listrow" data-exp>${ic('download')}<div class="nm">Guardar una copia ahora<small>Libros, reseñas y portadas en un archivo</small></div></div>
       <div class="listrow" data-imp>${ic('upload')}<div class="nm">Recuperar copia<small>Sustituye lo que hay ahora en la app</small></div></div>
       <h3 class="sec">Goodreads</h3>
       <div class="listrow" data-gr>${ic('book')}<div class="nm">Exportar para Goodreads<small>Archivo CSV con tus libros, notas, reseñas y estanterías</small></div></div>
-      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.2 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
+      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.3 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
     </div></div>`);
   const paintView = () => $$('[data-view] button', ov).forEach(b => b.classList.toggle('on', b.dataset.v === s.view));
   $$('[data-view] button', ov).forEach(b => b.onclick = () => { s.view = b.dataset.v; paintView(); save(); render(); });
@@ -1266,16 +1356,7 @@ function openSettings() {
   });
   $('[data-styles]', ov).onclick = openStyles;
   $('[data-shelves]', ov).onclick = openShelves;
-  $('[data-sagas]', ov).onclick = () => {
-    let n = 0;
-    for (const b of state.books) {
-      if (b.serie) continue;
-      const r = detectarSaga({ titulo: b.titulo, subtitulo: b.subtitulo });
-      if (r.serie) { b.titulo = r.titulo; b.subtitulo = r.subtitulo; b.serie = r.serie; b.numSerie = r.numSerie; n++; }
-    }
-    if (n) { saveNow(); render(); }
-    toast(n ? `Saga encontrada en ${n} ${n === 1 ? 'libro' : 'libros'}` : 'No he encontrado sagas en los títulos. Puedes ponerla a mano al editar un libro.');
-  };
+  $('[data-sagas]', ov).onclick = buscarSagasTodas;
   const paintAuto = () => { $('.autoinfo', ov).textContent = autoText(); };
   paintAuto();
   $('[data-auto]', ov).onclick = () => autoBackupMenu(paintAuto);
@@ -1299,6 +1380,31 @@ function openSettings() {
     const r = await native('importBackup');
     if (r === 'error') toast('Ese archivo no es una copia de Mi biblioteca');
   };
+}
+
+async function buscarSagasTodas() {
+  const lista = state.books.filter(b => !b.serie);
+  if (!lista.length) { toast('Todos tus libros tienen ya su saga'); return; }
+  let parar = false, hechos = 0, halladas = 0;
+  const ov = openLayer(`<h2 style="margin:0 0 6px;font-size:19px">Buscando sagas</h2>
+    <p class="muted txt" style="margin:0 0 12px;font-size:14px"></p><div class="bbar"><i></i></div>
+    <div style="margin-top:18px"><button class="btn sec" data-stop style="width:100%">Parar</button></div>`, 'sheet', () => { parar = true; });
+  const pinta = () => {
+    $('.txt', ov).textContent = `${hechos} de ${lista.length} libros revisados · ${halladas} ${halladas === 1 ? 'saga encontrada' : 'sagas encontradas'}`;
+    $('.bbar i', ov).style.width = (hechos / lista.length * 100) + '%';
+  };
+  $('[data-stop]', ov).onclick = () => closeLayer();
+  pinta();
+  for (const b of lista) {
+    if (parar) break;
+    const r = await buscarSaga(b);
+    if (r && !b.serie) { ponerSaga(b, r); halladas++; save(); render(); }
+    hechos++; pinta();
+    await new Promise(res => setTimeout(res, 300));
+  }
+  saveNow(); render();
+  if (!parar) closeLayer();
+  toast(halladas ? `Saga encontrada en ${halladas} ${halladas === 1 ? 'libro' : 'libros'}` : 'No he encontrado sagas. Puedes ponerlas a mano al editar cada libro.');
 }
 
 /* ---------------- Copia automática ---------------- */
