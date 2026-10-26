@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copia en la nube de Android (versiones anteriores a Android 12):
+     solo los datos de los libros; las portadas se vuelven a descargar. -->
+<full-backup-content>
+    <include domain="file" path="biblioteca.json" />
+</full-backup-content>

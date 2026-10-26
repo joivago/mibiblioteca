@@ -11,8 +11,8 @@ android {
         applicationId = "com.ivan.mibiblioteca"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     // Firma fija: así cada versión nueva se instala encima de la anterior
@@ -56,4 +56,6 @@ dependencies {
     implementation("androidx.webkit:webkit:1.11.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("com.google.zxing:core:3.4.1")
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }

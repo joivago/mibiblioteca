@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!-- Copia en la nube de Google: los datos de los libros (las portadas ocupan demasiado) -->
+    <cloud-backup>
+        <include domain="file" path="biblioteca.json" />
+    </cloud-backup>
+    <!-- Al pasar a un móvil nuevo con cable o con la copia de Android: todo, portadas incluidas -->
+    <device-transfer>
+        <include domain="file" path="biblioteca.json" />
+        <include domain="file" path="covers/" />
+    </device-transfer>
+</data-extraction-rules>

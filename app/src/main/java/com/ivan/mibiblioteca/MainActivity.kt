@@ -2,6 +2,7 @@ package com.ivan.mibiblioteca
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -26,6 +27,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.documentfile.provider.DocumentFile
 import androidx.exifinterface.media.ExifInterface
 import androidx.webkit.WebViewAssetLoader
 import com.journeyapps.barcodescanner.ScanContract
@@ -39,6 +41,9 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -58,6 +63,10 @@ class MainActivity : AppCompatActivity() {
     private var cbEscaner: String? = null
     private var cbImagen: String? = null
     private var cbCopia: String? = null
+    private var cbCarpeta: String? = null
+    private var cbRafaga: String? = null
+    private var tengoRafaga: ArrayList<String> = ArrayList()
+    private val prefs by lazy { getSharedPreferences("copia", MODE_PRIVATE) }
     private var archivoFoto: File? = null
     private var accionTrasPermiso: (() -> Unit)? = null
 
@@ -71,7 +80,36 @@ class MainActivity : AppCompatActivity() {
                 aviso("Sin permiso de cámara no puedo usarla")
                 cbEscaner?.let { resolver(it, null); cbEscaner = null }
                 cbImagen?.let { resolver(it, null); cbImagen = null }
+                cbRafaga?.let { resolver(it, null); cbRafaga = null }
             }
+        }
+
+    private val rafaga =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+            val cb = cbRafaga ?: return@registerForActivityResult
+            cbRafaga = null
+            val lista = r.data?.getStringArrayListExtra("codigos") ?: arrayListOf()
+            resolver(cb, JSONArray(lista).toString())
+        }
+
+    private val elegirCarpeta =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            val cb = cbCarpeta ?: return@registerForActivityResult
+            cbCarpeta = null
+            if (uri == null) { resolver(cb, null); return@registerForActivityResult }
+            try {
+                contentResolver.takePersistableUriPermission(uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            } catch (e: Exception) { resolver(cb, "error"); return@registerForActivityResult }
+            // Suelta la carpeta anterior, si había otra
+            prefs.getString("carpeta", null)?.let { vieja ->
+                if (vieja != uri.toString()) try {
+                    contentResolver.releasePersistableUriPermission(Uri.parse(vieja),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                } catch (_: Exception) { }
+            }
+            prefs.edit().putString("carpeta", uri.toString()).apply()
+            hilos.execute { resolver(cb, if (copiaAutomatica(forzar = true)) "ok" else "error") }
         }
 
     private val escaner = registerForActivityResult(ScanContract()) { r ->
@@ -169,6 +207,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    /** Al salir de la app, si ha habido cambios, se guarda la copia del día en la carpeta elegida. */
+    override fun onStop() {
+        super.onStop()
+        if (prefs.getBoolean("pendiente", false) && prefs.getString("carpeta", null) != null) {
+            hilos.execute { copiaAutomatica(forzar = false) }
+        }
     }
 
     override fun onDestroy() {
@@ -271,7 +317,7 @@ class MainActivity : AppCompatActivity() {
     // ---------- Copia de seguridad ----------
 
     private fun escribirCopia(uri: Uri) {
-        contentResolver.openOutputStream(uri)!!.use { salida ->
+        contentResolver.openOutputStream(uri, "wt")!!.use { salida ->
             JsonWriter(OutputStreamWriter(salida, Charsets.UTF_8)).use { w ->
                 w.beginObject()
                 w.name("app").value("mibiblioteca")
@@ -285,6 +331,50 @@ class MainActivity : AppCompatActivity() {
                 w.endObject()
             }
         }
+    }
+
+    private val bloqueoCopia = Any()
+
+    /** Escribe mi-biblioteca-AAAA-MM-DD.json en la carpeta elegida y conserva solo las 7 últimas. */
+    private fun copiaAutomatica(forzar: Boolean): Boolean = synchronized(bloqueoCopia) {
+        val carpeta = prefs.getString("carpeta", null) ?: return false
+        if (!forzar && !prefs.getBoolean("pendiente", false)) return true
+        try {
+            val arbol = DocumentFile.fromTreeUri(this, Uri.parse(carpeta))
+            if (arbol == null || !arbol.canWrite()) { prefs.edit().putBoolean("sinAcceso", true).apply(); return false }
+            val hoy = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+            val nombre = "mi-biblioteca-$hoy.json"
+            val archivo = arbol.findFile(nombre) ?: arbol.createFile("application/json", nombre) ?: return false
+            prefs.edit().putBoolean("pendiente", false).apply()
+            escribirCopia(archivo.uri)
+            arbol.listFiles()
+                .filter { (it.name ?: "").matches(Regex("mi-biblioteca-\\d{4}-\\d{2}-\\d{2}\\.json")) }
+                .sortedByDescending { it.name }
+                .drop(7)
+                .forEach { it.delete() }
+            prefs.edit().putLong("ultima", System.currentTimeMillis()).putBoolean("sinAcceso", false).apply()
+            true
+        } catch (e: Exception) {
+            prefs.edit().putBoolean("pendiente", true).apply()
+            false
+        }
+    }
+
+    private fun infoCopia(): String {
+        val carpeta = prefs.getString("carpeta", null)
+        var nombre = ""
+        var acceso = false
+        if (carpeta != null) {
+            val uri = Uri.parse(carpeta)
+            acceso = contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
+            nombre = try { DocumentFile.fromTreeUri(this, uri)?.name ?: "" } catch (e: Exception) { "" }
+        }
+        return JSONObject()
+            .put("activa", carpeta != null && acceso)
+            .put("carpeta", nombre)
+            .put("ultima", prefs.getLong("ultima", 0))
+            .put("pendiente", prefs.getBoolean("pendiente", false))
+            .toString()
     }
 
     private fun leerCopia(uri: Uri): Boolean {
@@ -336,7 +426,51 @@ class MainActivity : AppCompatActivity() {
         fun loadData(): String = if (archivoDatos.exists()) archivoDatos.readText() else ""
 
         @JavascriptInterface
-        fun saveData(json: String): Boolean = synchronized(this) { guardarDatos(json) }
+        fun saveData(json: String): Boolean = synchronized(this) {
+            val ok = guardarDatos(json)
+            if (ok) prefs.edit().putBoolean("pendiente", true).apply()
+            ok
+        }
+
+        // ----- Copia automática -----
+        @JavascriptInterface
+        fun backupInfo(): String = infoCopia()
+
+        @JavascriptInterface
+        fun chooseBackupFolder(cb: String) {
+            principal.post { cbCarpeta = cb; elegirCarpeta.launch(null) }
+        }
+
+        @JavascriptInterface
+        fun backupNow(cb: String) {
+            hilos.execute { resolver(cb, if (copiaAutomatica(forzar = true)) "ok" else "error") }
+        }
+
+        @JavascriptInterface
+        fun disableBackup() {
+            prefs.getString("carpeta", null)?.let {
+                try {
+                    contentResolver.releasePersistableUriPermission(Uri.parse(it),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                } catch (_: Exception) { }
+            }
+            prefs.edit().remove("carpeta").remove("ultima").apply()
+        }
+
+        // ----- Escaneo en ráfaga -----
+        @JavascriptInterface
+        fun scanBurst(cb: String, tengoJson: String) {
+            principal.post {
+                cbRafaga = cb
+                tengoRafaga = try {
+                    val a = JSONArray(tengoJson); ArrayList((0 until a.length()).map { a.getString(it) })
+                } catch (e: Exception) { ArrayList() }
+                conCamara {
+                    rafaga.launch(Intent(this@MainActivity, EscanerRafaga::class.java)
+                        .putStringArrayListExtra("tengo", tengoRafaga))
+                }
+            }
+        }
 
         @JavascriptInterface
         fun toast(texto: String) { aviso(texto) }
