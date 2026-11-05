@@ -92,6 +92,10 @@ function load() {
       if (state.settings.shelf && state.settings.shelf !== DESEOS && !state.settings.shelves.includes(state.settings.shelf)) state.settings.shelf = '';
       state.books.forEach(b => { if (!Array.isArray(b.etiquetas)) b.etiquetas = []; });
       let rellenas = 0;
+      state.books.forEach(b => {
+        if (b.editorial && editorialMala(b.editorial)) b.editorial = '';
+        if (b.coleccion && editorialMala(b.coleccion)) b.coleccion = '';
+      });
       state.books.forEach(b => { if (!b.editorial && b.isbn) { const e = editorialPorIsbn(b.isbn); if (e) { b.editorial = e; rellenas++; } } });
       if (rellenas) setTimeout(() => { saveNow(); toast(`Editorial puesta por el ISBN en ${rellenas} ${rellenas === 1 ? 'libro' : 'libros'}`); }, 600);
     } catch (e) { toast('No he podido leer los datos guardados'); }
@@ -913,8 +917,8 @@ async function ttlIsbn(isbn) {
   const syn = full || meta('description') || meta('og:description');
   return {
     titulo, subtitulo: '', autor: niceName(txt(doc.querySelector('a[href*="/creador/"]'))),
-    editorial: niceName(txt(doc.querySelector('a[href*="/editoriales/"]'))).replace(/[\s,]+S\.?\s?[AL]\.?(\s?U\.?)?$/i, ''),
-    coleccion: niceName(txt(doc.querySelector('a[href*="/colecciones/"],a[href*="/coleccion/"]'))),
+    editorial: niceName(campoTtl(doc, 'Editorial', 'a[href*="/editoriales/"]')).replace(/[\s,]+S\.?\s?[AL]\.?(\s?U\.?)?$/i, ''),
+    coleccion: niceName(campoTtl(doc, 'Colecci[oó]n', 'a[href*="/colecciones/"],a[href*="/coleccion/"]')),
     anio: (body.match(/(?:publicaci[oó]n|edici[oó]n)\s*:?\s*(?:\d{1,2}[\/-]\d{1,2}[\/-])?((?:19|20)\d{2})/i) || [])[1] || '',
     paginas: (body.match(/p[aá]ginas?\s*:?\s*(\d{2,4})/i) || [])[1] || '',
     isbn, idioma: 'es', sinopsis: syn, _corta: !full,
@@ -1001,6 +1005,29 @@ async function gbIsbn(isbn) {
   }
   return g;
 }
+/* Un dato de la ficha de todostuslibros: primero por su etiqueta («Editorial: …»),
+   y si no, por el enlace; nunca enlaces de menú o de materias («Ficción ›») */
+function campoTtl(doc, etiqueta, selector) {
+  const re = new RegExp('^\\s*' + etiqueta + '\\s*:?\\s*$', 'i');
+  const limpia = t => (t || '').replace(/[›»>]/g, '').replace(/\s+/g, ' ').trim();
+  for (const el of doc.querySelectorAll('dt, th, strong, b, span, label, div, li, p, h4, h5')) {
+    if (el.children.length > 1 || !re.test(el.textContent)) continue;
+    let sig = el.nextElementSibling;
+    if (sig && limpia(sig.textContent)) return limpia(sig.textContent);
+    // «<li><b>Editorial:</b> Anagrama</li>»
+    const padre = el.parentElement;
+    if (padre) { const resto = limpia(padre.textContent.replace(el.textContent, '')); if (resto && resto.length < 80) return resto; }
+  }
+  for (const a of doc.querySelectorAll(selector)) {
+    const t = limpia(a.textContent);
+    if (t && !/[›»]/.test(a.textContent) && !a.closest('nav, header, footer, .breadcrumb, [class*="menu"], [class*="categor"]') && !editorialMala(t)) return t;
+  }
+  return '';
+}
+// Valores que no son una editorial: categorías o restos de menús
+const MATERIAS = /^(ficci[oó]n|no ficci[oó]n|novela|narrativa|literatura|poes[ií]a|ensayo|infantil|juvenil|c[oó]mic|historia|biograf[ií]as?|novela negra|thriller|fantas[ií]a|ciencia ficci[oó]n|cl[aá]sicos|libros|editoriales|ver m[aá]s|ver todo|todas?)$/i;
+const editorialMala = e => !e || /[›»]/.test(e) || MATERIAS.test(String(e).replace(/[›»]/g, '').trim());
+
 /* ---------------- Editorial a partir del ISBN ----------------
    En un ISBN español (978-84-…) las cifras que siguen al 84 identifican a la editorial. */
 const PREFIJOS = {
@@ -1019,9 +1046,10 @@ function editorialPorIsbn(isbn) {
   // 1) Lo aprendido de tus propios libros: misma raíz de ISBN y misma editorial
   for (let n = 10; n >= 7; n--) {
     const raiz = isbn.slice(0, n);
-    const eds = new Set(state.books.filter(b => b.editorial && cleanIsbn(b.isbn).startsWith(raiz) && cleanIsbn(b.isbn) !== isbn).map(b => pubKey(b.editorial)));
+    const buena = b => b.editorial && !editorialMala(b.editorial);
+    const eds = new Set(state.books.filter(b => buena(b) && cleanIsbn(b.isbn).startsWith(raiz) && cleanIsbn(b.isbn) !== isbn).map(b => pubKey(b.editorial)));
     if (eds.size === 1 && n >= 8) {
-      const ej = state.books.find(b => b.editorial && cleanIsbn(b.isbn).startsWith(raiz));
+      const ej = state.books.find(b => buena(b) && cleanIsbn(b.isbn).startsWith(raiz));
       return pubName(ej.editorial);
     }
     if (eds.size > 1) break;
@@ -1053,7 +1081,9 @@ async function byIsbn(raw) {
   if (!r) return [];
   r.sinopsis = elegirSinopsis(t ? t.sinopsis : '', t && t._corta, gs);
   delete r._corta;
-  if (!r.editorial) r.editorial = (await gbEditorial(r._gid)) || editorialPorIsbn(isbn);
+  if (editorialMala(r.editorial)) r.editorial = '';
+  if (editorialMala(r.coleccion)) r.coleccion = '';
+  if (!r.editorial) r.editorial = editorialPorIsbn(isbn) || (await gbEditorial(r._gid));
   r.isbn = isbn;
   r.covers = coverList(isbn, r.covers);
   if (!r.thumb || conMarca(r.thumb)) r.thumb = r.covers[0] || '';
@@ -1416,7 +1446,7 @@ function openSettings() {
       <div class="listrow" data-imp>${ic('upload')}<div class="nm">Recuperar copia<small>Sustituye lo que hay ahora en la app</small></div></div>
       <h3 class="sec">Goodreads</h3>
       <div class="listrow" data-gr>${ic('book')}<div class="nm">Exportar para Goodreads<small>Archivo CSV con tus libros, notas, reseñas y estanterías</small></div></div>
-      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.6 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
+      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.7 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
     </div></div>`);
   const paintView = () => $$('[data-view] button', ov).forEach(b => b.classList.toggle('on', b.dataset.v === s.view));
   $$('[data-view] button', ov).forEach(b => b.onclick = () => { s.view = b.dataset.v; paintView(); save(); render(); });
@@ -1473,9 +1503,9 @@ async function completarDatos() {
     let r = null;
     try { r = (await byIsbn(b.isbn))[0] || null; } catch (e) { }
     let cambio = false;
-    const ed = (r && r.editorial) || editorialPorIsbn(b.isbn);
+    const ed = editorialPorIsbn(b.isbn) || (r && !editorialMala(r.editorial) ? r.editorial : '');
     if (!b.editorial && ed) { b.editorial = ed; cambio = true; }
-    if (r) for (const k of ['autor', 'paginas', 'anio', 'sinopsis', 'coleccion']) if (!b[k] && r[k]) { b[k] = r[k]; cambio = true; }
+    if (r) for (const k of ['autor', 'paginas', 'anio', 'sinopsis', 'coleccion']) if (!b[k] && r[k] && !(k === 'coleccion' && editorialMala(r[k]))) { b[k] = r[k]; cambio = true; }
     if (cambio) { mejorados++; save(); render(); }
     hechos++; pinta();
     await new Promise(res => setTimeout(res, 900));
