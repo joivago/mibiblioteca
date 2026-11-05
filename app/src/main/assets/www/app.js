@@ -91,6 +91,9 @@ function load() {
       state.settings.shelves = Array.isArray(state.settings.shelves) ? state.settings.shelves : [];
       if (state.settings.shelf && state.settings.shelf !== DESEOS && !state.settings.shelves.includes(state.settings.shelf)) state.settings.shelf = '';
       state.books.forEach(b => { if (!Array.isArray(b.etiquetas)) b.etiquetas = []; });
+      let rellenas = 0;
+      state.books.forEach(b => { if (!b.editorial && b.isbn) { const e = editorialPorIsbn(b.isbn); if (e) { b.editorial = e; rellenas++; } } });
+      if (rellenas) setTimeout(() => { saveNow(); toast(`Editorial puesta por el ISBN en ${rellenas} ${rellenas === 1 ? 'libro' : 'libros'}`); }, 600);
     } catch (e) { toast('No he podido leer los datos guardados'); }
   }
 }
@@ -217,12 +220,13 @@ function autorApellido(b) {
   while (i > 1 && part.test(p[i - 1])) i--;
   return p.slice(i).join(' ');
 }
+const conEd = (a, b) => (!a.editorial) - (!b.editorial);
 const SORTS = {
   autor: { c: 'Autor', n: 'Autor (A–Z)', f: (a, b) => cmp(a.autor, b.autor) || porSaga(a, b) },
   titulo: { c: 'Título', n: 'Título (A–Z)', f: porSaga },
-  editorial: { c: 'Editorial', n: 'Editorial y título (A–Z)', f: (a, b) => cmp(pubName(a.editorial), pubName(b.editorial)) || porSaga(a, b) },
-  edNombre: { c: 'Ed. y nombre', n: 'Editorial y nombre del autor', f: (a, b) => cmp(pubName(a.editorial), pubName(b.editorial)) || cmp(autorNombre(a), autorNombre(b)) || porSaga(a, b) },
-  edApellido: { c: 'Ed. y apellido', n: 'Editorial y apellido del autor', f: (a, b) => cmp(pubName(a.editorial), pubName(b.editorial)) || cmp(autorApellido(a), autorApellido(b)) || cmp(autorNombre(a), autorNombre(b)) || porSaga(a, b) },
+  editorial: { c: 'Editorial', n: 'Editorial y título (A–Z)', f: (a, b) => conEd(a, b) || cmp(pubName(a.editorial), pubName(b.editorial)) || porSaga(a, b) },
+  edNombre: { c: 'Ed. y nombre', n: 'Editorial y nombre del autor', f: (a, b) => conEd(a, b) || cmp(pubName(a.editorial), pubName(b.editorial)) || cmp(autorNombre(a), autorNombre(b)) || porSaga(a, b) },
+  edApellido: { c: 'Ed. y apellido', n: 'Editorial y apellido del autor', f: (a, b) => conEd(a, b) || cmp(pubName(a.editorial), pubName(b.editorial)) || cmp(autorApellido(a), autorApellido(b)) || cmp(autorNombre(a), autorNombre(b)) || porSaga(a, b) },
   anio: { c: 'Año', n: 'Año de publicación', f: (a, b) => (parseInt(a.anio) || 9999) - (parseInt(b.anio) || 9999) || cmp(a.autor, b.autor) },
   nota: { c: 'Nota', n: 'Mi puntuación', f: (a, b) => (b.nota || 0) - (a.nota || 0) || cmp(titleKey(a.titulo), titleKey(b.titulo)) },
   recientes: { c: 'Recientes', n: 'Añadidos recientemente', f: (a, b) => (b.creado || 0) - (a.creado || 0) }
@@ -343,7 +347,13 @@ function render() {
     }
   }
   // Baldas vacías hasta llenar la pantalla, para que parezca una librería
-  box.innerHTML = backupBanner() + html;
+  let aviso = '';
+  if (/^(editorial|edNombre|edApellido)$/.test(s.sort) || s.group) {
+    const sin = state.books.filter(b => enCasa(b) && !b.editorial).length;
+    if (sin) aviso = `<div class="nag">${ic('wand')}<div class="t"><b>${sin} ${sin === 1 ? 'libro no tiene' : 'libros no tienen'} editorial</b><span>Por eso van al final. Puedo buscarla por el ISBN.</span></div>
+      <div class="acts"><button class="btn" data-fillnow>Completar</button></div></div>`;
+  }
+  box.innerHTML = backupBanner() + aviso + html;
   const missing = Math.max(0, Math.ceil((window.innerHeight - box.getBoundingClientRect().bottom) / (rowH + 33)));
   if (missing) box.insertAdjacentHTML('beforeend', '<div class="row empty"><div class="books"></div><div class="plank"></div></div>'.repeat(Math.min(missing, 8)));
 }
@@ -829,7 +839,8 @@ function gbMap(it) {
     titulo: v.title || '', subtitulo: v.subtitle || '', autor: (v.authors || []).join(', '), editorial: v.publisher || '',
     anio: (v.publishedDate || '').slice(0, 4), paginas: v.pageCount || '', isbn: i13 || i10 || '', idioma: v.language || '',
     sinopsis: stripHtml(v.description), covers, thumb: img,
-    _numSerie: v.seriesInfo && v.seriesInfo.bookDisplayNumber ? v.seriesInfo.bookDisplayNumber : ''
+    _numSerie: v.seriesInfo && v.seriesInfo.bookDisplayNumber ? v.seriesInfo.bookDisplayNumber : '',
+    _gid: it.id || ''
   };
 }
 async function googleSearch(q) {
@@ -990,6 +1001,42 @@ async function gbIsbn(isbn) {
   }
   return g;
 }
+/* ---------------- Editorial a partir del ISBN ----------------
+   En un ISBN español (978-84-…) las cifras que siguen al 84 identifican a la editorial. */
+const PREFIJOS = {
+  '97884339': 'Anagrama', '97884204': 'Alfaguara', '97884322': 'Seix Barral', '9788408': 'Planeta',
+  '97884206': 'Alianza Editorial', '97884376': 'Cátedra', '97884233': 'Destino', '97884239': 'Espasa',
+  '97884264': 'Lumen', '97884450': 'Minotauro', '9788401': 'Plaza & Janés', '97884666': 'Ediciones B',
+  '97884397': 'Random House', '978847223': 'Tusquets', '978848310': 'Tusquets', '978848383': 'Tusquets',
+  '978849066': 'Tusquets', '978847844': 'Siruela', '978849841': 'Siruela', '978847888': 'Salamandra',
+  '978849838': 'Salamandra', '978847702': 'Valdemar', '978849759': 'Debolsillo', '978849793': 'Debolsillo',
+  '978849908': 'Debolsillo', '97884663': 'Debolsillo', '978849105': 'Penguin Clásicos', '978841513': 'Impedimenta'
+};
+function editorialPorIsbn(isbn) {
+  isbn = cleanIsbn(isbn);
+  if (isbn.length === 10) isbn = '978' + isbn.slice(0, 9);
+  if (!/^97[89]84/.test(isbn)) return '';
+  // 1) Lo aprendido de tus propios libros: misma raíz de ISBN y misma editorial
+  for (let n = 10; n >= 7; n--) {
+    const raiz = isbn.slice(0, n);
+    const eds = new Set(state.books.filter(b => b.editorial && cleanIsbn(b.isbn).startsWith(raiz) && cleanIsbn(b.isbn) !== isbn).map(b => pubKey(b.editorial)));
+    if (eds.size === 1 && n >= 8) {
+      const ej = state.books.find(b => b.editorial && cleanIsbn(b.isbn).startsWith(raiz));
+      return pubName(ej.editorial);
+    }
+    if (eds.size > 1) break;
+  }
+  // 2) Tabla de editoriales conocidas
+  for (let n = 10; n >= 7; n--) if (PREFIJOS[isbn.slice(0, n)]) return PREFIJOS[isbn.slice(0, n)];
+  return '';
+}
+// La ficha completa de Google trae la editorial más a menudo que la búsqueda
+async function gbEditorial(gid) {
+  if (!gid) return '';
+  try { const j = await fetchJSON('https://www.googleapis.com/books/v1/volumes/' + gid, 8000); return (j.volumeInfo || {}).publisher || ''; }
+  catch (e) { return ''; }
+}
+
 async function byIsbn(raw) {
   const isbn = cleanIsbn(raw);
   const [g, t, o] = await Promise.all([
@@ -1006,6 +1053,7 @@ async function byIsbn(raw) {
   if (!r) return [];
   r.sinopsis = elegirSinopsis(t ? t.sinopsis : '', t && t._corta, gs);
   delete r._corta;
+  if (!r.editorial) r.editorial = (await gbEditorial(r._gid)) || editorialPorIsbn(isbn);
   r.isbn = isbn;
   r.covers = coverList(isbn, r.covers);
   if (!r.thumb || conMarca(r.thumb)) r.thumb = r.covers[0] || '';
@@ -1256,7 +1304,7 @@ function processBurst(codes) {
         $('.bs', row).innerHTML = `<button class="chip" data-man="${code}">${ic('pen')}A mano</button>`;
       }
       paint();
-      await new Promise(res => setTimeout(res, 250));
+      await new Promise(res => setTimeout(res, 900));
     }
     terminado = true; paint();
   })();
@@ -1360,6 +1408,7 @@ function openSettings() {
       <div class="listrow" data-styles>${ic('palette')}<div class="nm">Estilos de editorial<small>Colores de lomos y portadas dibujadas</small></div>${ic('chevron')}</div>
       <h3 class="sec">Estanterías</h3>
       <div class="listrow" data-shelves>${ic('tag')}<div class="nm">Mis estanterías<small>Crear, cambiar de nombre o borrar</small></div>${ic('chevron')}</div>
+      <div class="listrow" data-fill>${ic('wand')}<div class="nm">Completar datos que faltan<small>Busca editorial, autor, páginas y sinopsis por el ISBN</small></div></div>
       <div class="listrow" data-sagas>${ic('book')}<div class="nm">Buscar sagas en mis libros<small>Busca en internet la saga y el número de cada libro</small></div></div>
       <h3 class="sec">Copia de seguridad</h3>
       <div class="listrow" data-auto>${ic('folder')}<div class="nm">Copia automática<small class="autoinfo"></small></div>${ic('chevron')}</div>
@@ -1367,7 +1416,7 @@ function openSettings() {
       <div class="listrow" data-imp>${ic('upload')}<div class="nm">Recuperar copia<small>Sustituye lo que hay ahora en la app</small></div></div>
       <h3 class="sec">Goodreads</h3>
       <div class="listrow" data-gr>${ic('book')}<div class="nm">Exportar para Goodreads<small>Archivo CSV con tus libros, notas, reseñas y estanterías</small></div></div>
-      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.5 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
+      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.6 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
     </div></div>`);
   const paintView = () => $$('[data-view] button', ov).forEach(b => b.classList.toggle('on', b.dataset.v === s.view));
   $$('[data-view] button', ov).forEach(b => b.onclick = () => { s.view = b.dataset.v; paintView(); save(); render(); });
@@ -1379,6 +1428,7 @@ function openSettings() {
   $('[data-styles]', ov).onclick = openStyles;
   $('[data-shelves]', ov).onclick = openShelves;
   $('[data-sagas]', ov).onclick = buscarSagasTodas;
+  $('[data-fill]', ov).onclick = completarDatos;
   const paintAuto = () => { $('.autoinfo', ov).textContent = autoText(); };
   paintAuto();
   $('[data-auto]', ov).onclick = () => autoBackupMenu(paintAuto);
@@ -1402,6 +1452,37 @@ function openSettings() {
     const r = await native('importBackup');
     if (r === 'error') toast('Ese archivo no es una copia de Mi biblioteca');
   };
+}
+
+async function completarDatos() {
+  const falta = b => !b.editorial || !b.autor || !b.paginas || !b.sinopsis;
+  const lista = state.books.filter(b => falta(b) && cleanIsbn(b.isbn).length >= 10);
+  if (!lista.length) { toast('No falta nada que se pueda buscar por ISBN'); return; }
+  let parar = false, hechos = 0, mejorados = 0;
+  const ov = openLayer(`<h2 style="margin:0 0 6px;font-size:19px">Completando datos</h2>
+    <p class="muted txt" style="margin:0 0 12px;font-size:14px"></p><div class="bbar"><i></i></div>
+    <div style="margin-top:18px"><button class="btn sec" data-stop style="width:100%">Parar</button></div>`, 'sheet', () => { parar = true; });
+  const pinta = () => {
+    $('.txt', ov).textContent = `${hechos} de ${lista.length} libros revisados · ${mejorados} completados`;
+    $('.bbar i', ov).style.width = (hechos / lista.length * 100) + '%';
+  };
+  $('[data-stop]', ov).onclick = () => closeLayer();
+  pinta();
+  for (const b of lista) {
+    if (parar) break;
+    let r = null;
+    try { r = (await byIsbn(b.isbn))[0] || null; } catch (e) { }
+    let cambio = false;
+    const ed = (r && r.editorial) || editorialPorIsbn(b.isbn);
+    if (!b.editorial && ed) { b.editorial = ed; cambio = true; }
+    if (r) for (const k of ['autor', 'paginas', 'anio', 'sinopsis', 'coleccion']) if (!b[k] && r[k]) { b[k] = r[k]; cambio = true; }
+    if (cambio) { mejorados++; save(); render(); }
+    hechos++; pinta();
+    await new Promise(res => setTimeout(res, 900));
+  }
+  saveNow(); render();
+  if (!parar) closeLayer();
+  toast(mejorados ? `Datos completados en ${mejorados} ${mejorados === 1 ? 'libro' : 'libros'}` : 'No he encontrado datos nuevos');
 }
 
 async function buscarSagasTodas() {
@@ -1727,6 +1808,7 @@ function init() {
     const bk = e.target.closest('.bk'); if (bk) return openDetail(bk.dataset.id);
     const act = e.target.closest('[data-act]');
     if (act) { if (act.dataset.act === 'burst') burstScan(); else openAdd(act.dataset.act === 'scan'); return; }
+    if (e.target.closest('[data-fillnow]')) { completarDatos(); return; }
     const nag = e.target.closest('[data-nag]');
     if (nag) {
       if (nag.dataset.nag === 'off') { state.settings.backupNag = true; save(); render(); }
