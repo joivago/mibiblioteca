@@ -197,10 +197,32 @@ function shortAuthor(a) {
 const sagaKey = b => titleKey(b.serie ? b.serie : b.titulo);
 const numSaga = b => { const n = parseFloat(String(b.numSerie || '').replace(',', '.')); return isNaN(n) ? 999 : n; };
 const porSaga = (a, b) => cmp(sagaKey(a), sagaKey(b)) || (a.serie && b.serie ? numSaga(a) - numSaga(b) : 0) || cmp(titleKey(a.titulo), titleKey(b.titulo));
+// Primer autor. «Sharpe, Tom» se entiende como apellido, nombre; «A B, C D E» como dos autores
+function primerAutor(b) {
+  const a = String(b.autor || '').split(/\s*[;&]\s*|\s+y\s+/)[0].trim();
+  const m = /^([^,]+),\s*([^,]+)$/.exec(a);
+  if (m && m[1].trim().split(/\s+/).length <= 2 && m[2].trim().split(/\s+/).length <= 2) return { nombre: m[2].trim() + ' ' + m[1].trim(), apellido: m[1].trim() };
+  return { nombre: a.split(',')[0].trim(), apellido: '' };
+}
+const autorNombre = b => primerAutor(b).nombre;
+// Apellido para ordenar: «Pérez-Reverte», «García Márquez», «Tolkien»
+function autorApellido(b) {
+  const pa = primerAutor(b);
+  if (pa.apellido) return pa.apellido;
+  const p = pa.nombre.split(/\s+/).filter(w => w && !/^(\p{Lu}\.)+$/u.test(w)); // sin iniciales
+  if (p.length <= 1) return p[0] || pa.nombre;
+  const part = /^(de|del|la|las|los|van|von|der|di|da|du|le|y)$/i;
+  // Nombre + dos apellidos (lo normal en español): desde el segundo término
+  let i = p.length >= 3 ? 1 : p.length - 1;
+  while (i > 1 && part.test(p[i - 1])) i--;
+  return p.slice(i).join(' ');
+}
 const SORTS = {
   autor: { c: 'Autor', n: 'Autor (A–Z)', f: (a, b) => cmp(a.autor, b.autor) || porSaga(a, b) },
   titulo: { c: 'Título', n: 'Título (A–Z)', f: porSaga },
   editorial: { c: 'Editorial', n: 'Editorial y título (A–Z)', f: (a, b) => cmp(pubName(a.editorial), pubName(b.editorial)) || porSaga(a, b) },
+  edNombre: { c: 'Ed. y nombre', n: 'Editorial y nombre del autor', f: (a, b) => cmp(pubName(a.editorial), pubName(b.editorial)) || cmp(autorNombre(a), autorNombre(b)) || porSaga(a, b) },
+  edApellido: { c: 'Ed. y apellido', n: 'Editorial y apellido del autor', f: (a, b) => cmp(pubName(a.editorial), pubName(b.editorial)) || cmp(autorApellido(a), autorApellido(b)) || cmp(autorNombre(a), autorNombre(b)) || porSaga(a, b) },
   anio: { c: 'Año', n: 'Año de publicación', f: (a, b) => (parseInt(a.anio) || 9999) - (parseInt(b.anio) || 9999) || cmp(a.autor, b.autor) },
   nota: { c: 'Nota', n: 'Mi puntuación', f: (a, b) => (b.nota || 0) - (a.nota || 0) || cmp(titleKey(a.titulo), titleKey(b.titulo)) },
   recientes: { c: 'Recientes', n: 'Añadidos recientemente', f: (a, b) => (b.creado || 0) - (a.creado || 0) }
@@ -1345,7 +1367,7 @@ function openSettings() {
       <div class="listrow" data-imp>${ic('upload')}<div class="nm">Recuperar copia<small>Sustituye lo que hay ahora en la app</small></div></div>
       <h3 class="sec">Goodreads</h3>
       <div class="listrow" data-gr>${ic('book')}<div class="nm">Exportar para Goodreads<small>Archivo CSV con tus libros, notas, reseñas y estanterías</small></div></div>
-      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.4 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
+      <p class="muted" style="font-size:12.5px;margin-top:26px;text-align:center">Mi biblioteca 1.5 · Datos de libros de Google Books, Open Library y Todos tus libros</p>
     </div></div>`);
   const paintView = () => $$('[data-view] button', ov).forEach(b => b.classList.toggle('on', b.dataset.v === s.view));
   $$('[data-view] button', ov).forEach(b => b.onclick = () => { s.view = b.dataset.v; paintView(); save(); render(); });
